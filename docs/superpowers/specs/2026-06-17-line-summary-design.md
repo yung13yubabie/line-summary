@@ -5,6 +5,19 @@
 
 ---
 
+## 本次具體異動
+
+| 調整點 | 更新內容 |
+|--------|----------|
+| 安全限制 | `key_extractor` 加互動式確認、禁止落磁碟、錯誤訊息不得含金鑰/聊天內容 |
+| Spike 前置 | Status 改 `Draft / Spike Required`，頂部加 Phase 0 五步驟關卡 |
+| MCP 套件 | 明確使用 `from mcp.server.fastmcp import FastMCP`，`requirements.txt` 待 Phase 0 後 pin 版本 |
+| 時間格式 | MCP tool 層只收嚴格 ISO 8601，自然語言由 Skill 層轉換，時區 `Asia/Taipei` |
+| 輸出路徑 | 改為 `chat_id_hash/`，加 `metadata.json` 對照，`.gitignore` 明列 `output/`、`profiles/`、`settings.json` |
+| 測試策略 | Phase 0 spike 測試獨立一節，五步驟全通過才進 Phase 1 |
+
+---
+
 ## 目標
 
 打造一套以 LINE PC（Windows）為資料來源的訊息摘要系統。透過 MCP Server 讓 Claude 可直接呼叫工具取得 LINE 聊天記錄，再由 Claude Skill 產出每日/區間結構化摘要。支援個人聊天與群組，無需手動匯出。
