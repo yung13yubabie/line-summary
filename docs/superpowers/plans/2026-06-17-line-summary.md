@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Python MCP Server that reads LINE PC (Windows) encrypted chat history and exposes it to Claude for 3-round structured summarization.
+**Goal:** Build a Python MCP Server that reads LINE PC (Windows) encrypted chat history — covering ALL chat types (個人/群組/多人聊天/官方帳號/開放聊天室) — and exposes it to Claude for 3-round structured summarization.
 
 **Architecture:** Phase 0 spike validates key extraction + wxSQLite3 decryption before any production code. Phase 1 builds `key_extractor.py`, `db_reader.py`, `line_mcp_server.py` with TDD. The `line-summary` SKILL.md orchestrates Claude to call MCP tools for summarization.
 
@@ -488,6 +488,14 @@ PASS: Found N tables
 - 2 = image (guess — confirm from data)
 - 3 = sticker (guess — confirm from data)
 
+## Chat Type Codes (record ALL types found)
+- [code] = personal (1-on-1)
+- [code] = group (群組)
+- [code] = multi-person chat (多人聊天，臨時)
+- [code] = official account (官方帳號 / LINE@)
+- [code] = open chat (開放聊天室)
+(Add any others found in DB)
+
 ## Notes
 [Any unexpected behaviour, errors, or retries needed]
 ```
@@ -950,6 +958,23 @@ _MSG_STICKER = 3
 _MSG_FILE    = 4
 _MSG_VIDEO   = 5
 _MSG_LINK    = 6
+
+# Chat type codes — update from spike/FINDINGS.md after Phase 0
+_CHAT_TYPE_MAP: dict[int, str] = {
+    1: "personal",    # 個人聊天
+    2: "group",       # 群組
+    3: "multi",       # 多人聊天（臨時）
+    4: "official",    # 官方帳號 / LINE@
+    5: "open",        # 開放聊天室
+    # Add more after Phase 0 schema inspection
+}
+_CHAT_TYPE_LABEL: dict[str, str] = {
+    "personal":  "個人",
+    "group":     "群組",
+    "multi":     "多人聊天",
+    "official":  "官方帳號",
+    "open":      "開放聊天室",
+}
 # ───────────────────────────────────────────────────────────────
 
 _URL_RE = re.compile(r'https?://[^\s　！-～]+')
@@ -1041,24 +1066,43 @@ class DbReader:
         ).fetchall()
         return {r["contact_id"]: r["display_name"] for r in rows}
 
-    def list_chats(self, query: str = "", limit: int = 50) -> list[dict]:
+    def list_chats(
+        self, query: str = "", chat_type: str = "", limit: int = 50
+    ) -> list[dict]:
         conn = self._open()
         try:
+            conditions, params = [], []
             if query:
-                rows = conn.execute(
-                    f"SELECT * FROM {_TABLE_CHAT} WHERE name LIKE ? "
-                    f"ORDER BY last_message_at DESC LIMIT ?;",
-                    (f"%{query}%", limit)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"SELECT * FROM {_TABLE_CHAT} "
-                    f"ORDER BY last_message_at DESC LIMIT ?;", (limit,)
-                ).fetchall()
-            return [{"chat_id": r["chat_id"], "name": r["name"],
-                     "type": r["type"], "member_count": r["member_count"],
-                     "last_message_at": _ts_to_iso(r["last_message_at"])}
-                    for r in rows]
+                conditions.append("name LIKE ?")
+                params.append(f"%{query}%")
+            if chat_type:
+                # Reverse-lookup numeric code from string label
+                code = next(
+                    (k for k, v in _CHAT_TYPE_MAP.items() if v == chat_type), None
+                )
+                if code is not None:
+                    conditions.append("type = ?")
+                    params.append(code)
+            where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            params.append(limit)
+            rows = conn.execute(
+                f"SELECT * FROM {_TABLE_CHAT} {where} "
+                f"ORDER BY last_message_at DESC LIMIT ?;",
+                params
+            ).fetchall()
+            return [
+                {
+                    "chat_id": r["chat_id"],
+                    "name": r["name"],
+                    "type": _CHAT_TYPE_MAP.get(r["type"], "unknown"),
+                    "type_label": _CHAT_TYPE_LABEL.get(
+                        _CHAT_TYPE_MAP.get(r["type"], ""), r["type"]
+                    ),
+                    "member_count": r["member_count"],
+                    "last_message_at": _ts_to_iso(r["last_message_at"]),
+                }
+                for r in rows
+            ]
         finally:
             conn.close()
 
@@ -1246,11 +1290,23 @@ def _get_reader() -> DbReader:
 
 
 @mcp.tool()
-def line_list_chats(query: str = "", limit: int = 50) -> list[dict]:
-    """List LINE chats (groups and personal). Supports fuzzy name search.
-    Returns: [{chat_id, name, type, member_count, last_message_at}]
+def line_list_chats(
+    query: str = "",
+    chat_type: str = "",
+    limit: int = 50,
+) -> list[dict]:
+    """List ALL LINE chats: personal, group, multi-person, official account, open chat.
+
+    Args:
+        query: Fuzzy match on chat name (optional)
+        chat_type: Filter by type — "personal", "group", "multi", "official", "open"
+                   Leave empty to return all types.
+        limit: Max results (default 50)
+
+    Returns: [{chat_id, name, type, type_label, member_count, last_message_at}]
+    type_label is human-readable: 個人/群組/多人聊天/官方帳號/開放聊天室
     """
-    return _get_reader().list_chats(query=query, limit=limit)
+    return _get_reader().list_chats(query=query, chat_type=chat_type, limit=limit)
 
 
 @mcp.tool()
