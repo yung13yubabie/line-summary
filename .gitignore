@@ -1,0 +1,11 @@
+output/
+*.edb
+*.db
+profiles/
+history.json
+metadata.json
+settings.json
+__pycache__/
+*.pyc
+.pytest_cache/
+spike/phase0_output*
