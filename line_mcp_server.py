@@ -7,6 +7,7 @@ SECURITY: Key cached in process memory only -- never returned by any tool.
 import glob
 import json
 import os
+import re
 from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
@@ -34,16 +35,22 @@ def _load_settings() -> dict:
         return dict(_DEFAULTS)
 
 
+_MAIN_EDB_RE = re.compile(r'^[0-9a-f]+$')
+
+
 def _find_edb_path(data_dir: str | None = None) -> str | None:
     if data_dir is None:
         data_dir = os.path.join(
             os.path.expandvars("%LOCALAPPDATA%"), "LINE", "Data", "db"
         )
-    matches = [
+    all_edb = [
         p for p in glob.glob(os.path.join(data_dir, "*.edb"))
         if not (p.endswith("-shm") or p.endswith("-wal"))
     ]
-    return matches[0] if matches else None
+    mains = [p for p in all_edb
+             if _MAIN_EDB_RE.match(os.path.splitext(os.path.basename(p))[0])]
+    candidates = mains if mains else all_edb
+    return max(candidates, key=os.path.getsize) if candidates else None
 
 
 def _parse_iso8601(value: str) -> int:
