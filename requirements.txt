@@ -1,6 +1,6 @@
 # Pin versions after Phase 0 confirms working setup
 mcp>=1.0.0
-sqlcipher3-binary
+sqlcipher3
 pywin32
 pytest>=8.0
 pytest-asyncio>=0.23
