@@ -12,7 +12,7 @@
 ## 安裝
 
 ```
-git clone <你的 repo 網址>
+git clone https://github.com/yung13yubabie/line-summary.git
 cd line-summary
 pip install -r requirements.txt
 ```
@@ -21,13 +21,13 @@ pip install -r requirements.txt
 
 專案裡已經有一份 `.mcp.json`。在這個資料夾裡開 Claude Code，它就會載入名叫 `line` 的 MCP server，第一次會問你要不要信任，選同意。
 
-想在任何資料夾都叫得到，就改成全域註冊（路徑換成你自己的）：
+想在任何資料夾都叫得到，改成全域註冊，把路徑換成 clone 下來的實際位置：
 
 ```
-claude mcp add line --scope user -- python C:\你的路徑\line-summary\line_mcp_server.py
+claude mcp add line --scope user -- python C:\path\to\line-summary\line_mcp_server.py
 ```
 
-全域註冊要寫絕對路徑，因為啟動時的工作目錄不一定在專案裡。專案內的 `.mcp.json` 用相對路徑就好，別動它。
+全域註冊要寫絕對路徑，因為啟動時的工作目錄不一定在專案裡。專案內附的 `.mcp.json` 用相對路徑，不需要改。
 
 ## 怎麼用
 
