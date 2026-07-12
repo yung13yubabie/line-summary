@@ -1,6 +1,7 @@
-# Pin versions after Phase 0 confirms working setup
+# Pin versions after Phase 0 confirms the exact wxSQLite3 cipher scheme.
 mcp>=1.0.0
-sqlcipher3
+# LINE uses wxSQLite3 → decrypt via apsw + SQLite3MultipleCiphers (NOT Zetetic sqlcipher3).
+apsw-sqlite3mc>=3.50
 pywin32
 pytest>=8.0
 pytest-asyncio>=0.23

@@ -17,6 +17,13 @@ Convert all time references to ISO 8601 with `+08:00` before calling tools:
 | 最近 N 天 | {today-N}T00:00:00+08:00 to now |
 | 上週 | last Monday T00:00:00+08:00 to last Sunday T23:59:59+08:00 |
 
+**Range rules (avoid silently capping the day):**
+- "今天" spans the WHOLE day (`...T23:59:59`), NOT "up to the current moment" —
+  the DB reads live data (WAL), so a full-day `until` captures everything so far.
+- If the user gives no range, default to 今天 and TELL them the window you used.
+- ALWAYS state the exact `since ~ until` window in the summary header, so the
+  covered range is never ambiguous.
+
 ## Round 1 -- Find Chat and Fetch Messages
 
 1. Call `line_list_chats(query="<chat name from user>")`.
@@ -41,30 +48,47 @@ Convert all time references to ISO 8601 with `+08:00` before calling tools:
 
 ## Round 3 -- Full Summary
 
-For each topic expand with quotes and context:
+Scannable at a glance: an identity block (WHICH chat), topic sections
+(the MESSAGES), then a distinct links section (the LINKS). Keep the three
+visually separate so a reader instantly finds chat / content / links.
 
 ```markdown
-## {date} LINE 摘要 -- {chat name}
+## 📋 {chat name} — {date} 每日摘要
+**類型：** {個人/群組/開放聊天室}　**時間範圍：** {since} ~ {until}　**訊息數：** {N} 則
 
-### 話題一：{topic}
-**時間：** HH:MM - HH:MM　**參與：** 王小明、李小美
+### 🧵 話題一：{topic}（HH:MM–HH:MM）
+**主要發言：** 王小明、李小美
 
 {2-3 句摘要}
 
-> 「{直接引用}」-- 王小明 14:30
+> 「{直接引用}」— 王小明 14:30
 
 {結論或決定}
 
----
+### 🔗 分享連結
+| 連結 | 分享者 | 時間 |
+|------|--------|------|
+| {title 或 URL} | 王小明 | 14:30 |
 
-### 分享連結
-- {title 或 URL} -- {發言人} HH:MM
+### 💡 今日乾貨與延伸
+{先萃取對話裡真的可行動、可學的知識點（工具、做法、踩過的坑），
+每點一句話。然後在能加值的地方，加上你自己的研判與延伸——相關工具、
+更進一步的做法、要注意的風險。像站在他們的討論上再往前推一步。
+沒有值得學的就寫「今日無」，不要硬湊。}
 
-### 發言統計
-| 姓名 | 訊息數 |
-|------|--------|
+### 📊 發言統計
+| 發言者 | 訊息數 |
+|--------|--------|
 | 王小明 | 23 |
 ```
+
+延伸段落只在有料時寫，且要標清楚哪些是原對話、哪些是你補的判斷，
+不要把自己的推論混進引用裡。
+
+Notes:
+- 個人/群組聊天的發言者名稱來自 `_contact`；開放聊天室來自 `_squareMember`
+  (both resolved by db_reader). Always show the resolved NAME, never the raw mid.
+- 連結一律獨立成「🔗 分享連結」表，不埋在話題內文，方便一眼掃到。
 
 ## Round 4 -- Audit Before Output
 

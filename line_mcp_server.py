@@ -7,7 +7,6 @@ SECURITY: Key cached in process memory only -- never returned by any tool.
 import glob
 import json
 import os
-import re
 from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
@@ -22,20 +21,32 @@ _DEFAULTS = {
     "media_mode": "placeholder",
     "url_extraction": True,
     "timezone": "Asia/Taipei",
+    # MCP runs over stdio JSON-RPC, so an interactive input() consent prompt would
+    # consume protocol messages and hang the server. Registering this local MCP
+    # server (+ LINE running) IS the consent boundary. Set true only for CLI use.
+    "require_consent": False,
 }
 
 _reader: DbReader | None = None
 
 
+# Resolve settings.json next to this file, not via CWD — Claude Code launches the
+# MCP server with an arbitrary working directory.
+_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+
 def _load_settings() -> dict:
     try:
-        with open("settings.json", encoding="utf-8") as f:
+        with open(_SETTINGS_PATH, encoding="utf-8") as f:
             return {**_DEFAULTS, **json.load(f)}
     except FileNotFoundError:
         return dict(_DEFAULTS)
 
 
-_MAIN_EDB_RE = re.compile(r'^[0-9a-f]+$')
+# Real LINE names: main DB = "qw"+hex; media/keep/stats DBs carry these prefixes.
+# The old `^[0-9a-f]+$` regex matched NO real filename (they start with "qw") and
+# only worked by falling through to "largest file" — exclude the prefixes instead.
+_EXCLUDE_PREFIXES = ("album_", "keep_", "chatStats_")
 
 
 def _find_edb_path(data_dir: str | None = None) -> str | None:
@@ -48,7 +59,7 @@ def _find_edb_path(data_dir: str | None = None) -> str | None:
         if not (p.endswith("-shm") or p.endswith("-wal"))
     ]
     mains = [p for p in all_edb
-             if _MAIN_EDB_RE.match(os.path.splitext(os.path.basename(p))[0])]
+             if not os.path.basename(p).startswith(_EXCLUDE_PREFIXES)]
     candidates = mains if mains else all_edb
     return max(candidates, key=os.path.getsize) if candidates else None
 
@@ -76,7 +87,7 @@ def _get_reader() -> DbReader:
     db_path = settings["db_path"] or _find_edb_path()
     if not db_path:
         raise RuntimeError("LINE .edb not found. Set db_path in settings.json.")
-    key = extract_key(db_path, require_consent=True)
+    key = extract_key(db_path, require_consent=settings["require_consent"])
     if not key:
         raise RuntimeError("User declined or key extraction failed.")
     _reader = DbReader(db_path, key)

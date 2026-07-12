@@ -9,3 +9,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 spike/phase0_output*
+
+# Internal planning docs: contain the local username and the OLD (pre-rewrite)
+# design that no longer matches the code. Kept locally, not published.
+docs/superpowers/
