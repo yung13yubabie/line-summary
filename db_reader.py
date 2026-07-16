@@ -5,7 +5,7 @@ ENGINE (confirmed 2026-07-11): LINE uses **wxSQLite3**. Decryption goes through
 apsw + SQLite3MultipleCiphers with scheme **aes128cbc** + passphrase — NOT Zetetic
 sqlcipher3 (incompatible; the old path failed HMAC on every key). See FINDINGS.md.
 
-SCHEMA (confirmed 2026-07-11 against LINE 26.3, see spike/real_schema.md):
+SCHEMA (confirmed against LINE 26.3):
 Tables are `_`-prefixed. Chat names are resolved across _groupChat / _contact /
 _room / _squareChat. Message rows live in _message keyed by _chatId, typed by
 _contentType. The old chat/message/contact + sender_id/sent_at guesses were wrong.
@@ -34,6 +34,13 @@ _CONTENT_TYPE: dict[int, str] = {
     0: "text", 1: "image", 2: "video", 3: "audio",
     6: "location", 7: "sticker", 13: "contact", 14: "file", 16: "link",
 }
+
+# Official/bot account _contact._type codes -- their unread is mostly marketing
+# pushes, so they are excluded from the unread list by default. PROVISIONAL: the
+# exact code is confirmed against the live DB in the Stage-3 verify. If _contact
+# has no _type column (e.g. a synthetic test DB), official filtering degrades to
+# a no-op rather than erroring.
+_OFFICIAL_CONTACT_TYPES: frozenset[int] = frozenset({16})
 
 _URL_RE = re.compile(r'https?://[^\s、-￿]+')
 _TZ_TAIPEI = timezone(timedelta(hours=8))
@@ -237,6 +244,103 @@ class DbReader:
                 (chat_id, since_ms, until_ms, limit)
             ))
             return [parse_message_row(dict(r), contact_map) for r in rows]
+        finally:
+            conn.close()
+
+    # -- unread ----------------------------------------------------------------
+    def _official_mids(self, conn) -> set[str]:
+        """mids of official/bot accounts, excluded from the unread list by default
+        (their unread is mostly marketing pushes). Degrades to empty set if the
+        _contact table has no _type column."""
+        def safe(sql: str) -> list:
+            try:
+                return list(conn.execute(sql))
+            except Exception:
+                return []
+        out: set[str] = set()
+        for r in safe(f"SELECT _mid, _type FROM {_T_CONTACT};"):
+            try:
+                t = r["_type"]
+            except Exception:  # pragma: no cover - defensive; SELECT guarantees the column
+                t = None
+            if t in _OFFICIAL_CONTACT_TYPES:
+                out.add(r["_mid"])
+        return out
+
+    def _unread_messages(
+        self, conn, chat_id: str, unread_count: int,
+        contact_map: dict[str, str], limit: int
+    ) -> tuple[list[dict], int]:
+        """Return (most recent locally-present messages, available count).
+
+        We deliberately do NOT range from _chat._firstUnreadId: that pointer is a
+        stale low-water mark for some chats, so "messages after it" can be the whole
+        history (observed: unread_count=1 but 97k messages after the marker). The
+        authoritative unread NUMBER is _unreadCount, so available is capped by it:
+
+            available = min(unread_count, messages present locally for this chat)
+
+        When bodies are not synced yet, fewer than unread_count messages exist on
+        disk and available drops below unread_count -- a high-confidence "missing"
+        signal. LINE gives no reliable per-message read boundary, so when the chat
+        DOES have >= unread_count messages on disk we optimistically treat the most
+        recent unread_count as the unread ones (they usually are)."""
+        if unread_count <= 0:
+            return [], 0
+        present_total = list(conn.execute(
+            f"SELECT count(*) c FROM {_T_MESSAGE} WHERE _chatId=?;", (chat_id,)
+        ))[0]["c"]
+        available = min(unread_count, present_total)
+        if available == 0:
+            return [], 0
+        rows = list(conn.execute(
+            f"SELECT * FROM {_T_MESSAGE} WHERE _chatId=? "
+            f"ORDER BY _createdTime DESC LIMIT ?;",
+            (chat_id, min(unread_count, limit))
+        ))
+        rows.reverse()  # chronological
+        return [parse_message_row(dict(r), contact_map) for r in rows], available
+
+    def get_unread(
+        self, limit_chats: int = 50, include_official: bool = False,
+        per_chat_limit: int = 200
+    ) -> list[dict]:
+        """List chats with unread messages, honest about LINE's lazy sync.
+        Per chat: available_count = unread bodies readable locally now (<= unread),
+        missing_count = unread LINE has not downloaded yet (open the app to fetch)."""
+        conn = self._open()
+        try:
+            maps = self._name_maps(conn)
+            contact_map = self._contacts_map(conn)
+            official = set() if include_official else self._official_mids(conn)
+            rows = list(conn.execute(
+                f"SELECT _id, _unreadCount, _lastUpdatedTime "
+                f"FROM {_T_CHAT} WHERE _unreadCount>0 "
+                f"ORDER BY _lastUpdatedTime DESC;"
+            ))
+            out = []
+            for r in rows:
+                cid = r["_id"]
+                if cid in official:
+                    continue
+                name, ctype = self._resolve_chat(cid, maps)
+                unread_n = r["_unreadCount"] or 0
+                msgs, available = self._unread_messages(
+                    conn, cid, unread_n, contact_map, per_chat_limit
+                )
+                out.append({
+                    "chat_id": cid,
+                    "name": name,
+                    "type": ctype,
+                    "unread_count": unread_n,
+                    "available_count": available,
+                    "missing_count": max(0, unread_n - available),
+                    "fully_synced": available >= unread_n,
+                    "messages": msgs,
+                })
+                if len(out) >= limit_chats:
+                    break
+            return out
         finally:
             conn.close()
 

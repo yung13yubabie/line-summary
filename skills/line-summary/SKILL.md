@@ -97,6 +97,45 @@ Notes:
 - [ ] 有連結訊息則有「分享連結」段
 - [ ] 媒體事件有出現在上下文中（非靜默忽略）
 
+## 未讀摘要 (line_get_unread)
+
+When the user asks "有什麼未讀 / 幫我看未讀 / 未讀重點", use `line_get_unread`
+instead of listing + fetching each chat by hand.
+
+Reading is passive (local DB only) — it never marks anything read and never sends
+a read receipt. Say so if the user worries about "已讀".
+
+Each returned chat carries an honest sync gap:
+- `available_count` — locally-present recent messages, capped at `unread_count`.
+- `missing_count` — `unread_count - available_count`; unread LINE has NOT
+  downloaded yet (bodies not synced).
+
+**You MUST surface `missing_count`, never hide it.** LINE syncs bodies lazily, so
+high-unread chats (big groups / OpenChat you have not opened) often have most of
+their unread not on disk. Claiming "summarized all unread" when `missing_count>0`
+is exactly the happy-path trap to avoid.
+
+Honesty caveat: LINE exposes no reliable per-message read boundary, so when a chat
+DOES have enough local history the tool treats the most recent `unread_count`
+messages as the unread ones. They usually are, but may include a few already-read
+messages. Present the digest as "最新訊息", not a guaranteed exact unread cut.
+
+Output format:
+
+```markdown
+## 📬 未讀摘要 — {date}　（共 {N} 個對話有未讀）
+> 本機被動讀取，未送出已讀、不會把訊息變已讀。
+
+### {chat name}（{type}）— 未讀 {unread_count}　可讀 {available_count}　尚未同步 {missing_count}
+{one-line-per-message digest of the available unread, sender + gist}
+{if missing_count>0:} ⚠️ 另有 {missing_count} 則未讀 LINE 尚未同步到本機，需在 app 打開該對話才會下載。
+```
+
+- Chats where `available_count == 0` still get listed with the ⚠️ line, so the
+  user knows the unread exists even though the body is not local.
+- Official accounts are excluded by default; only pass `include_official=True`
+  if the user explicitly wants marketing/notification pushes.
+
 ## Save Output
 
 Path: `~/line-summary/output/<chat_id>/<YYYY-MM-DD>.md`

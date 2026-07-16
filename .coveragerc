@@ -1,0 +1,14 @@
+[run]
+# Coverage target is the shipping runtime only. spike/ is a one-off reverse-
+# engineering harness (its "test" is running it against live LINE), and tests/
+# should not measure themselves.
+omit =
+    spike/*
+    tests/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+show_missing = True

@@ -13,3 +13,16 @@ spike/phase0_output*
 # Internal planning docs: contain the local username and the OLD (pre-rewrite)
 # design that no longer matches the code. Kept locally, not published.
 docs/superpowers/
+
+# Local working docs / scratch — never publish.
+HANDOFF.md
+scratchpad/
+
+# Coverage data artifact (the .coveragerc config IS committed; this binary is not).
+.coverage
+
+# Reverse-engineering teardown — kept local, never published. It documents how
+# LINE's encrypted DB was cracked; keeping it out of the public repo reduces ToS
+# and legal exposure. The product does not need it at runtime.
+spike/
+tests/test_phase0_spike.py

@@ -164,5 +164,5 @@ def extract_key(edb_path: str, require_consent: bool = True) -> str | None:
 
     raise RuntimeError(
         "Memory candidates found but none decrypted the database. "
-        "LINE may have been updated -- check spike/FINDINGS.md."
+        "LINE may have been updated -- re-confirm the cipher scheme."
     )

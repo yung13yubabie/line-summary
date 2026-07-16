@@ -54,10 +54,10 @@ Claude 會呼叫三個工具把訊息撈出來，照 `skills/line-summary/SKILL.
 
 - 只讀你自己電腦、你自己登入的 LINE。金鑰在記憶體裡用完就算了，不寫檔、不寫 log、不上網。
 - 群組和開放聊天室裡有別人的訊息。自己整理來看沒問題，要公開之前先想一下。
-- 目前只在 LINE 電腦版 26.3 上試過（它用 wxSQLite3 的 aes128cbc 加密）。LINE 改版可能就要重新對加密方式，過程記在 `spike/FINDINGS.md`。
+- 目前只在 LINE 電腦版 26.3 上試過（它用 wxSQLite3 的 aes128cbc 加密）。LINE 改版可能就要重新確認加密方式。
 
 ## 動不了的時候
 
 - 「LINE is not running」：LINE 沒開或沒登入。
-- 掃不到金鑰、或每個候選都解不開：多半是 LINE 更新過，加密方式變了。先看 `spike/FINDINGS.md` 裡怎麼查的。
+- 掃不到金鑰、或每個候選都解不開：多半是 LINE 更新過，加密方式變了，需要重新確認解密方式。
 - 用系統管理員開 terminal 有時能讀到更多記憶體區段。

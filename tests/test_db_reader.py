@@ -7,7 +7,7 @@ from db_reader import (
 
 
 def _make_test_db(path: str):
-    """Synthetic DB matching the REAL LINE 26.3 schema (see spike/real_schema.md)."""
+    """Synthetic DB matching the REAL LINE 26.3 schema."""
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE _chat (_id TEXT PRIMARY KEY, _lastUpdatedTime INTEGER)")
     conn.execute("CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT)")

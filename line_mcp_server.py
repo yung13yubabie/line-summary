@@ -140,6 +140,42 @@ def line_get_history(
 
 
 @mcp.tool()
+def line_get_unread(
+    limit_chats: int = 50,
+    include_official: bool = False,
+    per_chat_limit: int = 200,
+) -> list[dict]:
+    """List LINE chats that have unread messages.
+
+    Reading is passive: this reads the local encrypted DB and never contacts
+    LINE's servers, so it does NOT send a read receipt or mark anything read.
+
+    HONEST DISCLOSURE: LINE downloads message bodies lazily, so for chats you have
+    not opened the unread text may not be on disk yet. Each chat reports
+    available_count (recent messages present locally, capped at unread_count) and
+    missing_count (unread LINE has not synced -- open the chat in the app to fetch).
+    LINE gives no reliable per-message read boundary, so available_count is capped
+    by unread_count rather than derived from _firstUnreadId (a stale pointer that
+    otherwise over-counts wildly); the most recent unread_count messages are treated
+    as the unread ones and may include a few already-read.
+
+    Args:
+        limit_chats: Max chats to return (default 50)
+        include_official: Include official/bot accounts (default False -- their
+                          unread is mostly marketing pushes)
+        per_chat_limit: Max messages returned per chat (default 200)
+
+    Returns: [{chat_id, name, type, unread_count, available_count, missing_count,
+               fully_synced, messages:[{type, sender, content, ...}]}]
+    """
+    return _get_reader().get_unread(
+        limit_chats=limit_chats,
+        include_official=include_official,
+        per_chat_limit=per_chat_limit,
+    )
+
+
+@mcp.tool()
 def line_get_contacts(query: str = "") -> list[dict]:
     """Get LINE contacts for name resolution.
     Returns: [{contact_id, display_name}]
