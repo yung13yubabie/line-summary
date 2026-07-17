@@ -59,6 +59,27 @@ def _make_resolve_db(path):
     conn.close()
 
 
+def _make_official_db(path):
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE _chat (_id TEXT PRIMARY KEY, _lastUpdatedTime INTEGER)")
+    conn.execute("CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayName TEXT, _displayNameOverridden TEXT, _type INTEGER)")
+    conn.execute("INSERT INTO _contact VALUES ('off1', '某官方帳號', NULL, 16)")
+    conn.execute("INSERT INTO _contact VALUES ('u1', '王小明', NULL, 0)")
+    conn.execute("INSERT INTO _chat VALUES ('off1', 2)")
+    conn.execute("INSERT INTO _chat VALUES ('u1', 1)")
+    conn.commit(); conn.close()
+
+
+def test_resolve_chat_official_type(tmp_path):
+    db = str(tmp_path / "off.db")
+    _make_official_db(db)
+    r = DbReader(db, key=None, _test_mode=True)
+    chats = {c["chat_id"]: c for c in r.list_chats()}
+    assert chats["off1"]["type"] == "official" and chats["off1"]["name"] == "某官方帳號"
+    assert chats["u1"]["type"] == "personal"   # non-official contact stays personal
+    assert [c["chat_id"] for c in r.list_chats(chat_type="official")] == ["off1"]
+
+
 def test_resolve_chat_open_multi_unknown(tmp_path):
     db = str(tmp_path / "r.db")
     _make_resolve_db(db)
@@ -91,11 +112,11 @@ def test_parse_iso8601_malformed_with_tz_raises():
 
 def test_load_settings_reads_file(tmp_path):
     p = tmp_path / "settings.json"
-    p.write_text(json.dumps({"db_path": "X.edb", "media_mode": "vision"}), encoding="utf-8")
+    p.write_text(json.dumps({"db_path": "X.edb", "require_consent": True}), encoding="utf-8")
     with patch.object(srv, "_SETTINGS_PATH", str(p)):
         s = srv._load_settings()
-    assert s["db_path"] == "X.edb" and s["media_mode"] == "vision"
-    assert s["timezone"] == "Asia/Taipei"  # defaults merged in
+    assert s["db_path"] == "X.edb"
+    assert s["require_consent"] is True  # file value overrides default
 
 
 def test_find_edb_path_excludes_prefixes_and_picks_largest(tmp_path):

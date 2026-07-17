@@ -232,8 +232,9 @@ class DbReader:
             )
         }
         rooms = {r["_mid"]: r for r in safe(f"SELECT _mid FROM {_T_ROOM};")}
-        return {"group": groups, "square": squares,
-                "contact": contacts, "room": rooms}
+        official = self._official_mids(conn)
+        return {"group": groups, "square": squares, "contact": contacts,
+                "room": rooms, "official": official}
 
     def _resolve_chat(self, chat_id: str, maps: dict) -> tuple[str, str]:
         """Return (display_name, chat_type) for a _chat._id."""
@@ -243,6 +244,8 @@ class DbReader:
             return maps["square"][chat_id] or chat_id, "open"
         if chat_id in maps["room"]:
             return "多人聊天", "multi"
+        if chat_id in maps["official"]:
+            return maps["contact"].get(chat_id) or chat_id, "official"
         if chat_id in maps["contact"]:
             return maps["contact"][chat_id] or chat_id, "personal"
         return chat_id, "unknown"

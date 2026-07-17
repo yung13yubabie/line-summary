@@ -21,9 +21,8 @@ def test_parse_iso8601_rejects_missing_timezone():
 def test_load_settings_returns_defaults_when_missing():
     with patch('builtins.open', side_effect=FileNotFoundError):
         s = _load_settings()
-    assert s["media_mode"] == "placeholder"
-    assert s["url_extraction"] is True
-    assert s["timezone"] == "Asia/Taipei"
+    assert s["db_path"] == ""
+    assert s["require_consent"] is False
 
 
 def test_find_edb_path_returns_none_when_dir_empty(tmp_path):

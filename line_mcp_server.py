@@ -17,10 +17,6 @@ mcp = FastMCP("line-summary")
 
 _DEFAULTS = {
     "db_path": "",
-    "output_dir": os.path.expanduser("~/line-summary/output"),
-    "media_mode": "placeholder",
-    "url_extraction": True,
-    "timezone": "Asia/Taipei",
     # MCP runs over stdio JSON-RPC, so an interactive input() consent prompt would
     # consume protocol messages and hang the server. Registering this local MCP
     # server (+ LINE running) IS the consent boundary. Set true only for CLI use.
@@ -100,13 +96,12 @@ def line_list_chats(
     chat_type: str = "",
     limit: int = 50,
 ) -> list[dict]:
-    """List LINE chats: personal, group, multi-person, open chat.
+    """List LINE chats: personal, group, multi-person, official account, open chat.
 
     Args:
         query: Fuzzy match on chat name (optional)
-        chat_type: Filter by type -- "personal", "group", "multi", "open".
-                   Leave empty to return all. (Official accounts currently resolve
-                   as "personal"; there is no dedicated "official" type yet.)
+        chat_type: Filter by type -- "personal", "group", "multi", "official", "open".
+                   Leave empty to return all.
         limit: Max results (default 50)
 
     Returns: [{chat_id, name, type, last_message_at}]
