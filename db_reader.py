@@ -192,10 +192,8 @@ def parse_message_row(row: dict[str, Any], contact_map: dict[str, str]) -> dict:
                 "url": meta.get("url") or meta.get("linkUrl"),
                 "title": meta.get("title"), "description": meta.get("desc"),
                 "sent_at": sent}
-    if kind in ("video", "audio", "location", "contact"):
-        return {"type": kind, "sender": sender, "content": row.get("_text"),
-                "sent_at": sent}
-    # Unknown content type: surface the code rather than silently dropping it.
+    # video/audio/location/contact (known) and any unknown _contentType all surface
+    # the raw text under their resolved kind, rather than being silently dropped.
     return {"type": kind, "sender": sender, "content": row.get("_text"),
             "sent_at": sent}
 
