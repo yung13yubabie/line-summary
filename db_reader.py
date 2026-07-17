@@ -45,6 +45,26 @@ _OFFICIAL_CONTACT_TYPES: frozenset[int] = frozenset({16})
 _URL_RE = re.compile(r'https?://[^\s、-￿]+')
 _TZ_TAIPEI = timezone(timedelta(hours=8))
 
+# Hard cap on any caller-supplied LIMIT. Prevents a single call from pulling the
+# whole DB into a tool result.
+_MAX_LIMIT = 5000
+
+
+def _sane_limit(value: Any, default: int) -> int:
+    """Clamp a caller-supplied limit to a safe positive range.
+
+    SQLite treats a negative LIMIT as 'unlimited', so an unchecked negative value
+    leaks every row past the requested bound (a real privacy risk for a tool that
+    returns private chat content). Zero/negative/non-int -> default; oversized ->
+    capped at _MAX_LIMIT."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    if v <= 0:
+        return default
+    return min(v, _MAX_LIMIT)
+
 
 def _dict_row(cursor: Any, row: tuple) -> dict:
     """apsw rowtrace: map each row to a dict keyed by column name."""
@@ -203,6 +223,7 @@ class DbReader:
     def list_chats(
         self, query: str = "", chat_type: str = "", limit: int = 50
     ) -> list[dict]:
+        limit = _sane_limit(limit, 50)
         conn = self._open()
         try:
             maps = self._name_maps(conn)
@@ -232,6 +253,7 @@ class DbReader:
     def get_history(
         self, chat_id: str, since_ts: int, until_ts: int, limit: int = 500
     ) -> list[dict]:
+        limit = _sane_limit(limit, 500)
         conn = self._open()
         try:
             contact_map = self._contacts_map(conn)
@@ -308,6 +330,8 @@ class DbReader:
         """List chats with unread messages, honest about LINE's lazy sync.
         Per chat: available_count = unread bodies readable locally now (<= unread),
         missing_count = unread LINE has not downloaded yet (open the app to fetch)."""
+        limit_chats = _sane_limit(limit_chats, 50)
+        per_chat_limit = _sane_limit(per_chat_limit, 200)
         conn = self._open()
         try:
             maps = self._name_maps(conn)

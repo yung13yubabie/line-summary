@@ -100,16 +100,16 @@ def line_list_chats(
     chat_type: str = "",
     limit: int = 50,
 ) -> list[dict]:
-    """List ALL LINE chats: personal, group, multi-person, official account, open chat.
+    """List LINE chats: personal, group, multi-person, open chat.
 
     Args:
         query: Fuzzy match on chat name (optional)
-        chat_type: Filter by type -- "personal", "group", "multi", "official", "open"
-                   Leave empty to return all types.
+        chat_type: Filter by type -- "personal", "group", "multi", "open".
+                   Leave empty to return all. (Official accounts currently resolve
+                   as "personal"; there is no dedicated "official" type yet.)
         limit: Max results (default 50)
 
-    Returns: [{chat_id, name, type, type_label, member_count, last_message_at}]
-    type_label is human-readable: 個人/群組/多人聊天/官方帳號/開放聊天室
+    Returns: [{chat_id, name, type, last_message_at}]
     """
     return _get_reader().list_chats(query=query, chat_type=chat_type, limit=limit)
 

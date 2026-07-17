@@ -9,6 +9,7 @@ SECURITY (enforced):
 """
 import ctypes
 import ctypes.wintypes
+import os
 import re
 import subprocess
 
@@ -51,8 +52,12 @@ def validate_key_format(candidate: str) -> bool:
 
 
 def find_line_pid() -> int | None:
+    # Absolute path avoids PATH/search-order hijack of a spoofed tasklist.exe.
+    tasklist = os.path.join(
+        os.environ.get("SystemRoot", r"C:\Windows"), "System32", "tasklist.exe"
+    )
     result = subprocess.run(
-        ['tasklist', '/FI', 'IMAGENAME eq LINE.exe', '/FO', 'CSV', '/NH'],
+        [tasklist, '/FI', 'IMAGENAME eq LINE.exe', '/FO', 'CSV', '/NH'],
         capture_output=True, text=True, encoding='utf-8', errors='ignore'
     )
     for line in result.stdout.splitlines():

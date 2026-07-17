@@ -2,6 +2,7 @@
 # Coverage target is the shipping runtime only. spike/ is a one-off reverse-
 # engineering harness (its "test" is running it against live LINE), and tests/
 # should not measure themselves.
+branch = True
 omit =
     spike/*
     tests/*
@@ -12,3 +13,7 @@ exclude_lines =
     if __name__ == .__main__.:
     raise NotImplementedError
 show_missing = True
+# Enforced floor for the clean-clone (offline) suite. The memory-scan path in
+# key_extractor is only exercised with LINE running (integration), so the full
+# suite lands higher; this floor guards the reproducible offline baseline.
+fail_under = 85
