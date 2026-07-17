@@ -190,6 +190,7 @@ def test_extract_key_raises_when_line_not_running():
 def test_extract_key_raises_when_no_candidates():
     import key_extractor as ke
     with patch.object(ke, "find_line_pid", return_value=123), \
+         patch("db_reader.preflight_db_access"), \
          patch.object(ke, "_scan_memory_regions", return_value=[]):
         with pytest.raises(RuntimeError, match="read LINE process memory"):
             ke.extract_key("x.edb", require_consent=False)
@@ -198,6 +199,7 @@ def test_extract_key_raises_when_no_candidates():
 def test_extract_key_returns_first_matching_candidate():
     import key_extractor as ke
     with patch.object(ke, "find_line_pid", return_value=123), \
+         patch("db_reader.preflight_db_access"), \
          patch.object(ke, "_scan_memory_regions", return_value=["a" * 32, "b" * 32]), \
          patch("db_reader.probe_key", side_effect=[False, True]):
         assert ke.extract_key("x.edb", require_consent=False) == "b" * 32
@@ -206,9 +208,77 @@ def test_extract_key_returns_first_matching_candidate():
 def test_extract_key_raises_when_no_candidate_decrypts():
     import key_extractor as ke
     with patch.object(ke, "find_line_pid", return_value=123), \
+         patch("db_reader.preflight_db_access"), \
          patch.object(ke, "_scan_memory_regions", return_value=["a" * 32]), \
          patch("db_reader.probe_key", return_value=False):
         with pytest.raises(RuntimeError, match="none decrypted"):
+            ke.extract_key("x.edb", require_consent=False)
+
+
+# --- Point 4: DB access error classification (not misreported as wrong key) --
+def test_preflight_missing_file_raises():
+    from db_reader import preflight_db_access, DbAccessError
+    with pytest.raises(DbAccessError, match="file not found"):
+        preflight_db_access("C:/definitely/not/here.edb")
+
+
+def test_preflight_wrong_key_signal_is_ok(tmp_path):
+    import db_reader
+    from db_reader import preflight_db_access
+    p = tmp_path / "x.edb"; p.write_bytes(b"x")
+    with patch.object(db_reader, "_open_encrypted",
+                      side_effect=Exception("file is not a database")):
+        assert preflight_db_access(str(p)) is None   # normal wrong-key signal
+
+
+def test_preflight_locked_raises(tmp_path):
+    import db_reader
+    from db_reader import preflight_db_access, DbAccessError
+    p = tmp_path / "x.edb"; p.write_bytes(b"x")
+    with patch.object(db_reader, "_open_encrypted",
+                      side_effect=Exception("database is locked")):
+        with pytest.raises(DbAccessError, match="locked"):
+            preflight_db_access(str(p))
+
+
+def test_preflight_permission_raises(tmp_path):
+    import db_reader
+    from db_reader import preflight_db_access, DbAccessError
+    p = tmp_path / "x.edb"; p.write_bytes(b"x")
+    with patch.object(db_reader, "_open_encrypted",
+                      side_effect=Exception("Access is denied")):
+        with pytest.raises(DbAccessError, match="permission"):
+            preflight_db_access(str(p))
+
+
+def test_preflight_unexpected_error_raises(tmp_path):
+    import db_reader
+    from db_reader import preflight_db_access, DbAccessError
+    p = tmp_path / "x.edb"; p.write_bytes(b"x")
+    with patch.object(db_reader, "_open_encrypted",
+                      side_effect=Exception("weird boom")):
+        with pytest.raises(DbAccessError, match="unexpected"):
+            preflight_db_access(str(p))
+
+
+def test_preflight_ok_when_dummy_key_opens(tmp_path):
+    import db_reader
+    from db_reader import preflight_db_access
+    p = tmp_path / "x.edb"; p.write_bytes(b"x")
+    fake = MagicMock()
+    fake.execute.return_value = iter([{"c": 0}])
+    with patch.object(db_reader, "_open_encrypted", return_value=fake):
+        assert preflight_db_access(str(p)) is None
+    fake.close.assert_called_once()
+
+
+def test_extract_key_reports_access_error_not_wrong_key():
+    import key_extractor as ke
+    import db_reader
+    with patch.object(ke, "find_line_pid", return_value=123), \
+         patch.object(db_reader, "preflight_db_access",
+                      side_effect=db_reader.DbAccessError("database is locked")):
+        with pytest.raises(RuntimeError, match="Cannot access the LINE database"):
             ke.extract_key("x.edb", require_consent=False)
 
 

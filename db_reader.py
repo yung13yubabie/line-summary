@@ -11,6 +11,7 @@ _room / _squareChat. Message rows live in _message keyed by _chatId, typed by
 _contentType. The old chat/message/contact + sender_id/sent_at guesses were wrong.
 """
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
@@ -86,7 +87,9 @@ def _open_encrypted(db_path: str, key: str) -> Any:
 
 def probe_key(db_path: str, key: str) -> bool:
     """Return True if key decrypts the .edb under the configured wxSQLite3 scheme.
-    Called by key_extractor to validate memory candidates."""
+    Called by key_extractor to validate memory candidates. Boolean by contract: a
+    failure here means 'this candidate did not decrypt', nothing more. Use
+    preflight_db_access() to tell a broken environment from a wrong key."""
     try:
         conn = _open_encrypted(db_path, key)
         next(conn.execute("SELECT count(*) FROM sqlite_master;"))
@@ -94,6 +97,49 @@ def probe_key(db_path: str, key: str) -> bool:
         return True
     except Exception:
         return False
+
+
+class DbAccessError(Exception):
+    """The .edb cannot be accessed for reasons unrelated to the key: missing file,
+    no read permission, database locked, or a broken cipher/engine setup. Kept
+    distinct so these are never misreported as 'wrong key / LINE updated'."""
+
+
+# Substrings that mean 'encrypted DB, wrong key' -- the engine works, the key is
+# just wrong. Anything else on a preflight is an environment problem.
+_WRONG_KEY_SIGNALS = ("not a database", "hmac", "file is encrypted", "encrypted")
+_LOCK_SIGNALS = ("locked", "busy")
+_ACCESS_SIGNALS = ("permission", "access is denied", "cannot open", "unable to open")
+
+
+def preflight_db_access(db_path: str) -> None:
+    """Confirm the .edb is a present, readable, engine-openable ENCRYPTED DB.
+
+    Returns None when the file is encrypted and merely needs the correct key (the
+    normal case, recognised by the engine's 'not a database'/HMAC signal). Raises
+    DbAccessError with a specific reason for genuine environment problems, so a
+    permission/lock/cipher failure is not swallowed into 'none of the keys worked'."""
+    if not os.path.exists(db_path):
+        raise DbAccessError(f"file not found: {db_path}")
+    if not os.access(db_path, os.R_OK):
+        raise DbAccessError(f"no read permission: {db_path}")
+    try:
+        conn = _open_encrypted(db_path, "0" * 32)  # deliberately wrong key
+        try:
+            next(conn.execute("SELECT count(*) FROM sqlite_master;"))
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001 -- classified below, not swallowed
+        msg = str(e).lower()
+        if any(s in msg for s in _WRONG_KEY_SIGNALS):
+            return  # normal: encrypted DB, wrong key -> engine healthy
+        if any(s in msg for s in _LOCK_SIGNALS):
+            raise DbAccessError(f"database is locked: {e}") from e
+        if any(s in msg for s in _ACCESS_SIGNALS):
+            raise DbAccessError(f"cannot open the DB file (permission/handle): {e}") from e
+        raise DbAccessError(f"unexpected DB access error: {e}") from e
+    # A dummy key that actually decrypts is implausible, but if so the DB is fine.
+    return
 
 
 def extract_urls_from_text(text: str | None) -> list[str]:

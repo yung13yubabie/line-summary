@@ -155,6 +155,15 @@ def extract_key(edb_path: str, require_consent: bool = True) -> str | None:
     if pid is None:
         raise RuntimeError("LINE is not running. Start LINE and try again.")
 
+    # Preflight the DB so a broken environment (missing file, permission, lock,
+    # cipher) is reported for what it is, instead of being swallowed by the probe
+    # loop and misreported as 'none of the keys worked / LINE updated'.
+    from db_reader import preflight_db_access, DbAccessError, probe_key
+    try:
+        preflight_db_access(edb_path)
+    except DbAccessError as e:
+        raise RuntimeError(f"Cannot access the LINE database: {e}") from e
+
     candidates = _scan_memory_regions(pid)
     if not candidates:
         raise RuntimeError(
@@ -162,12 +171,11 @@ def extract_key(edb_path: str, require_consent: bool = True) -> str | None:
             "Try running as Administrator."
         )
 
-    from db_reader import probe_key
     for candidate in candidates:
         if probe_key(edb_path, candidate):
             return candidate
 
     raise RuntimeError(
-        "Memory candidates found but none decrypted the database. "
-        "LINE may have been updated -- re-confirm the cipher scheme."
+        "Found key candidates but none decrypted the database. The DB is readable "
+        "(preflight passed), so LINE likely rotated its key or changed its cipher."
     )
