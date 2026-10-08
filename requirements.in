@@ -1,0 +1,5 @@
+# Direct runtime dependencies. Compile to requirements.txt with hashes.
+# Stay on the existing MCP 1.x API and APSW 3.50 cipher implementation.
+-c requirements-platform.in
+mcp==1.29.0
+apsw-sqlite3mc==3.50.4.0

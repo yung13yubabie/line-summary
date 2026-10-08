@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.helpers import authorize, result
 
 import db_reader
 import line_mcp_server as srv
@@ -62,13 +63,14 @@ def test_get_history_bounds_filter_by_time(tmp_path):
     db = str(tmp_path / "h.db"); _hist_db(db)
     r = DbReader(db, key=None, _test_mode=True)
     # since=2s (2000ms), until=6s (6000ms): only the 5000ms message qualifies
-    msgs = r.get_history("c", since_ts=2, until_ts=6, limit=10)
+    msgs = r.get_history("c", since_ms=2000, until_ms=6000, limit=10)["items"]
     assert [m["content"] for m in msgs] == ["inrange"]
 
 
 # gap 4: line_get_unread must default to EXCLUDING official
-def test_line_get_unread_defaults_to_excluding_official():
-    fake = MagicMock(); fake.get_unread.return_value = []
+def test_line_get_unread_defaults_to_excluding_official(monkeypatch):
+    authorize(monkeypatch)
+    fake = MagicMock(); fake.get_unread.return_value = result()
     with patch.object(srv, "_get_reader", return_value=fake):
         srv.line_get_unread()
     assert fake.get_unread.call_args.kwargs["include_official"] is False

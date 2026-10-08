@@ -34,7 +34,7 @@ def test_validate_key_format_rejects_non_hex():
 
 
 def test_scan_memory_regions_returns_empty_when_open_fails():
-    with patch('ctypes.windll') as mock_windll:
+    with patch('ctypes.windll', create=True) as mock_windll:
         mock_windll.kernel32.OpenProcess.return_value = None
         result = _scan_memory_regions(pid=9999)
         assert result == []
