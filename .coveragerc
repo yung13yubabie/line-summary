@@ -4,10 +4,7 @@ source =
     key_extractor
     line_mcp_server
     safety
-# Coverage target is the shipping runtime only. spike/ is a one-off reverse-
-# engineering harness (its "test" is running it against live LINE), tools/ is
-# an interactive real-mouse-automation script not unit-testable in CI, and
-# tests/ should not measure themselves.
+# Measure shipping runtime only; exclude local tools and test code.
 branch = True
 omit =
     spike/*
@@ -20,7 +17,5 @@ exclude_lines =
     if __name__ == .__main__.:
     raise NotImplementedError
 show_missing = True
-# Enforced floor for the clean-clone (offline) suite. The memory-scan path in
-# key_extractor is not validated against real LINE by this suite; this floor
-# guards the reproducible synthetic baseline without claiming live coverage.
+# Offline coverage threshold; this does not validate live LINE access.
 fail_under = 85

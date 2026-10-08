@@ -20,13 +20,10 @@ MEM_PRIVATE = 0x20000
 PAGE_NOACCESS = 0x01
 PAGE_GUARD = 0x100
 
-# The key is a small server-provided string on a normal heap allocation, so cap
-# region size aggressively — scanning multi-GB regions dominated startup (~146s).
-# 128MB keeps coverage while cutting the scan to well under a minute.
+# Limit the size of memory regions read per scan.
 _MAX_REGION_BYTES = 128 * 1024 * 1024
 
-# LINE 26.3 (Qt6) holds strings as UTF-16LE, so scan BOTH ASCII and UTF-16LE and
-# accept either case — an ASCII-only scan misses ~1000 real candidates (see FINDINGS.md).
+# Candidate patterns for supported in-memory string encodings.
 _PAT32 = re.compile(rb'(?<![0-9a-zA-Z])([0-9a-fA-F]{32})(?![0-9a-zA-Z])')
 _PAT32_U16 = re.compile(rb'(?:[0-9a-fA-F]\x00){32}')
 
@@ -71,9 +68,7 @@ def find_line_pid() -> int | None:
 
 
 def _scan_memory_regions(pid: int) -> list[str]:
-    """Scan LINE private memory; return 32-char hex candidates ordered by
-    frequency (most-repeated first). The DB passphrase is referenced in several
-    places, so a frequency-first serial probe usually hits within a few tries."""
+    """Return candidate keys from readable LINE process memory."""
     from collections import Counter
 
     kernel32 = ctypes.windll.kernel32
@@ -106,8 +101,7 @@ def _scan_memory_regions(pid: int) -> list[str]:
                     buf, mbi.RegionSize, ctypes.byref(n)
                 ) and n.value > 0:
                     chunk = buf.raw[:n.value]
-                    # LINE's key is a 32-char hex passphrase (confirmed aes128cbc
-                    # + PRAGMA key), held as ASCII or UTF-16LE (Qt QString).
+                    # Collect candidates from supported string encodings.
                     for m in _PAT32.findall(chunk):
                         counts[m.decode('ascii').lower()] += 1
                     for m in _PAT32_U16.findall(chunk):
@@ -141,12 +135,6 @@ def extract_key(edb_path: str, require_consent: bool = True) -> str | None:
     """
     Extract LINE wxSQLite3 key from process memory.
     Returns key or None. Key never logged or written to disk.
-
-    Probing is SERIAL by design. This runs inside an MCP stdio server that is
-    itself a child process; spawning a ProcessPool from there fails on Windows
-    (multiprocessing DuplicateHandle -> WinError 5, access denied), so parallel
-    probing would hang in real use. Candidates are frequency-ordered so the
-    serial probe usually hits within the first handful of tries.
     """
     if require_consent and not confirm_user_consent():
         return None

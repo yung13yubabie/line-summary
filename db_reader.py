@@ -1,11 +1,7 @@
 """
 Reads LINE PC wxSQLite3-encrypted .edb.
 
-ENGINE (confirmed 2026-07-11): LINE uses **wxSQLite3**. Decryption goes through
-apsw + SQLite3MultipleCiphers with scheme **aes128cbc** + passphrase — NOT Zetetic
-sqlcipher3 (incompatible; the old path failed HMAC on every key). See FINDINGS.md.
-
-SCHEMA (confirmed against LINE 26.3):
+SCHEMA:
 Tables are `_`-prefixed. Chat names are resolved across _groupChat / _contact /
 _room / _squareChat. Message rows live in _message keyed by _chatId, typed by
 _contentType. The old chat/message/contact + sender_id/sent_at guesses were wrong.
@@ -19,7 +15,7 @@ from typing import Any
 from pathlib import Path
 from safety import CursorCodec, page
 
-# -- Cipher config: CONFIRMED via phase0.py against LINE 26.3 ------------------
+# -- Database cipher configuration -------------------------------------------
 _CIPHER_SCHEME = "aes128cbc"
 _KEY_MODE = "pass"
 
@@ -32,17 +28,16 @@ _T_ROOM = "_room"
 _T_SQUARE = "_squareChat"
 _T_SQUARE_MEMBER = "_squareMember"
 
-# LINE message _contentType codes (protocol; refine from real distribution).
+# LINE message content-type codes.
 _CONTENT_TYPE: dict[int, str] = {
     0: "text", 1: "image", 2: "video", 3: "audio",
     6: "location", 7: "sticker", 13: "contact", 14: "file", 16: "link",
 }
 
 # Official/bot account _contact._type codes -- their unread is mostly marketing
-# pushes, so they are excluded from the unread list by default. PROVISIONAL: the
-# exact code is confirmed against the live DB in the Stage-3 verify. If _contact
-# has no _type column (e.g. a synthetic test DB), official filtering degrades to
-# a no-op rather than erroring.
+# pushes, so they are excluded from the unread list by default. This mapping
+# is schema-dependent. If _contact has no _type column, official filtering
+# degrades to a no-op rather than erroring.
 _OFFICIAL_CONTACT_TYPES: frozenset[int] = frozenset({16})
 
 _URL_RE = re.compile(r'https?://[^\s、-￿]+')

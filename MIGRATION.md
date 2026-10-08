@@ -207,52 +207,29 @@ budgets. It can cause network downloads, local persistence, and changes in read
 status. Never run it automatically to make a summary look complete; read
 [its warnings](tools/README.md) before deciding whether to use it.
 
-## 7. Install locked dependencies and keep tests offline
+## 7. Install locked dependencies
 
-Runtime and test dependencies now have separate hash locks. In the reviewed
-Python environment, install runtime packages with:
+Runtime and test dependencies use separate hash locks. In the reviewed Python
+environment, install runtime packages with:
 
 ```text
 python -m pip install --require-hashes --only-binary=:all: -r requirements.txt
 ```
 
-For development/testing, install both locks and run the synthetic suite:
-
-```text
-python -m pip install --require-hashes --only-binary=:all: -r requirements.txt -r requirements-test.txt
-python -m pytest -m "not integration" --cov --cov-report=term-missing
-```
-
 The direct inputs are `requirements.in`, `requirements-platform.in`, and
-`requirements-test.in`. Runtime pins MCP 1.29.0 and apsw-sqlite3mc 3.50.4.0;
-the test lock pins pytest 8.4.2 and pytest-cov 6.2.1. Unused pytest-asyncio was
-removed. pywin32 remains a Windows-only transitive MCP dependency, constrained
-to 310 for Python below 3.14 and 311 for Python 3.14 and later. These pins do
-not constitute live Windows validation.
-
-Maintainers can regenerate the locks with uv 0.12.19, review all changes, and
-retest before accepting them:
-
-```text
-uv pip compile requirements.in --universal --python-version 3.11 --generate-hashes --no-build -o requirements.txt
-uv pip compile requirements-test.in --universal --python-version 3.11 --generate-hashes --no-build -o requirements-test.txt
-```
+`requirements-test.in`. Runtime pins MCP 1.29.0 and apsw-sqlite3mc 3.50.4.0.
+pywin32 remains a Windows-only transitive MCP dependency, constrained to 310 for
+Python below 3.14 and 311 for Python 3.14 and later. These pins do not constitute
+live Windows validation. Review related lock files together when dependencies change.
 
 Wheels must exist for the selected platform/Python combination. If a locked
 wheel is unavailable, stop and investigate compatibility rather than disabling
 hash checks or silently building another source package. The optional
 `uiautomation` tool dependency remains outside these locks.
 
-### Verification boundary
+### Live-access boundary
 
-Use the synthetic/mock suite for routine checks. Ordinary pytest, including
-`-m integration` by itself, skips live tests before platform/LINE detection.
-The explicit `--run-live-line` flag is required because those tests access
-actual LINE process memory and chat data; the fixture checks this opt-in too.
-Do not enable it just because LINE is open, or interpret skipped integration
-tests as a live pass. The authored CI workflow is configured for synthetic
-Ubuntu and Windows tests on Python 3.11/3.12, never that flag, with no test-artifact uploads;
-a workflow file is not evidence that a remote CI run passed.
-Publication of the repair branch and a draft PR is separate from validation.
-No merge, release, deployment, administrator escalation, or real LINE operation
-is performed by the repair workflow.
+Ordinary automated checks use synthetic data and do not validate actual LINE
+process memory, account data, or the live database schema. Real account access
+requires separate, explicit owner opt-in. Never enable live access in CI or
+interpret skipped checks as evidence that it works.

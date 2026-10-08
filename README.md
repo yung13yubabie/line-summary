@@ -23,7 +23,7 @@ LINE 程序記憶體 → 本機金鑰提取 → 以唯讀模式解密本機 LINE
 - Python 3.11 以上與 Claude Code。
 - 對本機資料庫的讀取權限，以及可用的 SQLite3MultipleCiphers 引擎。
 
-原專案曾在 LINE 電腦版 26.3（wxSQLite3 aes128cbc）上測試。LINE 更新後可能需要重新驗證；本次安全修補沒有執行 Windows／真實帳號整合測試。
+本次版本未執行真實 Windows／LINE 帳號整合驗證；LINE 更新後可能影響相容性。
 
 ## 安裝
 
@@ -85,7 +85,7 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 - 「幫我看 XXX 從 10 月 1 日到 10 月 3 日的對話」
 - 「整理允許的聊天室最近的未讀重點」
 
-同名聊天室要先確認，不能把多個結果直接合併讀取。第一次獲准的資料讀取需要掃描 LINE 記憶體，可能較慢；原實測約 80 秒，不是固定耗時。金鑰只由這個 MCP 程序快取，重啟後需重新取得。
+同名聊天室要先確認，不能把多個結果直接合併讀取。第一次獲准的資料讀取需要掃描 LINE 記憶體，可能較慢。金鑰只由這個 MCP 程序快取，重啟後需重新取得。
 
 摘要會列出確切時區、半開區間 `[since, until)`、已回傳訊息數，以及任何分頁、截斷或額度造成的未完成範圍。查到空結果只代表指定範圍內沒有回傳的本機記錄，不能宣稱該聊天室沒有聊過。
 
@@ -122,7 +122,7 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 
 **它不能驗證畫面上目前開啟的是指定聊天室。** 名稱參數只用來查詢資料庫統計，不會選取或核對畫面上的對話。此腳本直接讀取資料庫，不受 MCP server 的聊天室允許清單或輸出額度保護。請先閱讀 [選用工具說明](tools/README.md)，由使用者獨立決定是否執行；摘要 skill 不會自動啟動它。
 
-## 排查與測試
+## 排查
 
 - 存取遭拒：核對使用者設定的 `enabled`、`db_path` 與明確聊天室 ID；不要自動開放所有聊天室。
 - 額度已用完：摘要必須標示不完整；讓使用者決定後續範圍，不自動重啟或提高額度。
@@ -130,17 +130,8 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 - 找不到資料庫／無法開啟：檢查 `db_path`、一般檔案讀取權限、鎖定狀態與 cipher 相依套件。不要把所有錯誤都解釋成金鑰錯誤或 LINE 改版。
 - 權限或程序記憶體讀取受阻：停止並檢查原因，不預設提權、不停用系統保護。不要貼出金鑰、記憶體傾印或真實聊天內容求助。
 
-日常測試使用人工資料與 mock，避免碰觸真實 LINE：
+一般測試預設不存取真實 LINE。真實帳號驗證需要使用者另行明確同意，不能把離線測試結果當成相容性保證。
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: -r requirements.txt -r requirements-test.txt
-.\.venv\Scripts\python.exe -m pytest -m "not integration" --cov --cov-report=term-missing
-```
+## 升級注意
 
-普通 pytest（甚至只加 `-m integration`）都會在偵測 LINE 前跳過 live 測試。真實 Windows 整合測試會讀取帳號的程序記憶體與聊天資料，必須另行明確決定並加上 `--run-live-line` 才會啟用；不要放進日常測試或 CI。沒有執行就不能宣稱通過。升級前後的行為差異見 [MIGRATION.md](MIGRATION.md)。
-
-## 修復紀錄（2026-10-08）
-
-本次核心修復加入穩定分頁、正確日期邊界、保守未讀標示、server 範圍及資料預算，並修正 skill 位置、離線測試預設值及依賴鎖定。這是會改變工具 schema 的更新，升級請先讀 [MIGRATION.md](MIGRATION.md)；逐項紀錄見 [CHANGELOG.md](CHANGELOG.md)。
-
-本機 Linux Python 3.12 合成測試：122 passed、5 項真實 LINE 測試 skipped；runtime coverage 88.81%（啟用 branch measurement，門檻 85%）。已對原始基線套用 patch 並重跑。CI 設定增加 Linux／Windows、Python 3.11／3.12 的合成測試；實際遠端結果以 PR checks 為準。這些測試不會存取真實 LINE，也不能視為 Windows LINE 相容性驗證。
+本版本會改變工具 schema。升級前請閱讀 [MIGRATION.md](MIGRATION.md)，並同步更新本機設定與 skill；主要功能變更見 [CHANGELOG.md](CHANGELOG.md)。

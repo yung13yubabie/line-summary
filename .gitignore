@@ -10,8 +10,7 @@ __pycache__/
 .pytest_cache/
 spike/phase0_output*
 
-# Internal planning docs: contain the local username and the OLD (pre-rewrite)
-# design that no longer matches the code. Kept locally, not published.
+# Local planning documents.
 docs/superpowers/
 
 # Local working docs / scratch — never publish.
@@ -21,12 +20,9 @@ scratchpad/
 # Coverage data artifact (the .coveragerc config IS committed; this binary is not).
 .coverage
 
-# Reverse-engineering teardown — kept local, never published. It documents how
-# LINE's encrypted DB was cracked; keeping it out of the public repo reduces ToS
-# and legal exposure. The product does not need it at runtime.
+# Local development files; excluded from publication.
 spike/
 tests/test_phase0_spike.py
 
-# Real chat exports dropped in the repo root during manual testing (contain real
-# message text and real member names) — must never be committed.
+# Private chat exports; must never be committed.
 比賽用_*
