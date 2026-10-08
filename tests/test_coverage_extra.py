@@ -11,6 +11,7 @@ import db_reader as dbr
 import line_mcp_server as srv
 from db_reader import DbReader, parse_message_row
 from tests.test_db_reader import _make_test_db
+from tests.helpers import authorize, result
 
 
 # --- parse_message_row: every content-type branch --------------------------
@@ -74,16 +75,16 @@ def test_resolve_chat_official_type(tmp_path):
     db = str(tmp_path / "off.db")
     _make_official_db(db)
     r = DbReader(db, key=None, _test_mode=True)
-    chats = {c["chat_id"]: c for c in r.list_chats()}
+    chats = {c["chat_id"]: c for c in r.list_chats()["items"]}
     assert chats["off1"]["type"] == "official" and chats["off1"]["name"] == "某官方帳號"
     assert chats["u1"]["type"] == "personal"   # non-official contact stays personal
-    assert [c["chat_id"] for c in r.list_chats(chat_type="official")] == ["off1"]
+    assert [c["chat_id"] for c in r.list_chats(chat_type="official")["items"]] == ["off1"]
 
 
 def test_resolve_chat_open_multi_unknown(tmp_path):
     db = str(tmp_path / "r.db")
     _make_resolve_db(db)
-    chats = {c["chat_id"]: c for c in DbReader(db, key=None, _test_mode=True).list_chats()}
+    chats = {c["chat_id"]: c for c in DbReader(db, key=None, _test_mode=True).list_chats()["items"]}
     assert chats["sq1"]["type"] == "open" and chats["sq1"]["name"] == "開放群"
     assert chats["rm1"]["type"] == "multi" and chats["rm1"]["name"] == "多人聊天"
     assert chats["x1"]["type"] == "unknown"
@@ -93,14 +94,14 @@ def test_resolve_chat_open_multi_unknown(tmp_path):
 def test_list_chats_query_filters_by_name(tmp_path):
     db = str(tmp_path / "q.db")
     _make_test_db(db)
-    res = DbReader(db, key=None, _test_mode=True).list_chats(query="家族")
+    res = DbReader(db, key=None, _test_mode=True).list_chats(query="家族")["items"]
     assert [c["chat_id"] for c in res] == ["c1"]
 
 
 def test_get_contacts_query_filters(tmp_path):
     db = str(tmp_path / "q.db")
     _make_test_db(db)
-    res = DbReader(db, key=None, _test_mode=True).get_contacts(query="小明")
+    res = DbReader(db, key=None, _test_mode=True).get_contacts(query="小明")["items"]
     assert [c["display_name"] for c in res] == ["王小明"]
 
 
@@ -112,11 +113,11 @@ def test_parse_iso8601_malformed_with_tz_raises():
 
 def test_load_settings_reads_file(tmp_path):
     p = tmp_path / "settings.json"
-    p.write_text(json.dumps({"db_path": "X.edb", "require_consent": True}), encoding="utf-8")
+    p.write_text(json.dumps({"db_path": "X.edb", "enabled": True}), encoding="utf-8")
     with patch.object(srv, "_SETTINGS_PATH", str(p)):
         s = srv._load_settings()
     assert s["db_path"] == "X.edb"
-    assert s["require_consent"] is True  # file value overrides default
+    assert s["enabled"] is True  # file value overrides default
 
 
 def test_find_edb_path_excludes_prefixes_and_picks_largest(tmp_path):
@@ -129,24 +130,26 @@ def test_find_edb_path_excludes_prefixes_and_picks_largest(tmp_path):
 
 def _fake_reader():
     r = MagicMock()
-    r.list_chats.return_value = ["chat"]
-    r.get_history.return_value = ["msg"]
-    r.get_unread.return_value = ["unread"]
-    r.get_contacts.return_value = ["contact"]
+    r.list_chats.return_value = result(["chat"])
+    r.get_history.return_value = result(["msg"])
+    r.get_unread.return_value = result([{"messages": ["unread"]}])
+    r.get_contacts.return_value = result(["contact"])
     return r
 
 
-def test_tool_wrappers_delegate_to_reader():
+def test_tool_wrappers_delegate_to_reader(monkeypatch):
+    authorize(monkeypatch)
     fake = _fake_reader()
     with patch.object(srv, "_get_reader", return_value=fake):
-        assert srv.line_list_chats() == ["chat"]
+        assert srv.line_list_chats() == result(["chat"])
         assert srv.line_get_history("c", "2026-01-01T00:00:00+08:00",
-                                    "2026-01-02T00:00:00+08:00") == ["msg"]
-        assert srv.line_get_unread() == ["unread"]
-        assert srv.line_get_contacts() == ["contact"]
+                                    "2026-01-02T00:00:00+08:00") == result(["msg"])
+        assert srv.line_get_unread() == result([{"messages": ["unread"]}])
+        assert srv.line_get_contacts() == result(["contact"])
 
 
 def test_get_reader_caches_and_builds(monkeypatch):
+    authorize(monkeypatch)
     srv._reader = None
     monkeypatch.setattr(srv, "_find_edb_path", lambda: "main.edb")
     monkeypatch.setattr(srv, "extract_key", lambda path, require_consent: "k" * 32)
@@ -159,18 +162,20 @@ def test_get_reader_caches_and_builds(monkeypatch):
 
 
 def test_get_reader_raises_without_db(monkeypatch):
+    authorize(monkeypatch, db_path="")
     srv._reader = None
     monkeypatch.setattr(srv, "_find_edb_path", lambda: None)
-    with pytest.raises(RuntimeError, match="not found"):
+    with pytest.raises(RuntimeError, match="Explicit db_path"):
         srv._get_reader()
     srv._reader = None
 
 
 def test_get_reader_raises_when_key_declined(monkeypatch):
+    authorize(monkeypatch)
     srv._reader = None
     monkeypatch.setattr(srv, "_find_edb_path", lambda: "main.edb")
     monkeypatch.setattr(srv, "extract_key", lambda path, require_consent: None)
-    with pytest.raises(RuntimeError, match="declined or key extraction failed"):
+    with pytest.raises(RuntimeError, match="Key extraction failed"):
         srv._get_reader()
     srv._reader = None
 
@@ -311,7 +316,7 @@ def test_ts_to_iso_none_returns_none():
 def test_list_chats_limit_breaks_early(tmp_path):
     db = str(tmp_path / "l.db")
     _make_test_db(db)
-    assert len(DbReader(db, key=None, _test_mode=True).list_chats(limit=1)) == 1
+    assert len(DbReader(db, key=None, _test_mode=True).list_chats(limit=1)["items"]) == 1
 
 
 def _make_bare_unread_db(path):
@@ -334,10 +339,10 @@ def _make_bare_unread_db(path):
 def test_get_unread_null_boundary_and_missing_contact_table(tmp_path):
     db = str(tmp_path / "bare.db")
     _make_bare_unread_db(db)
-    unread = DbReader(db, key=None, _test_mode=True).get_unread()
+    unread = DbReader(db, key=None, _test_mode=True).get_unread()["items"]
     assert len(unread) == 1
     a = unread[0]
     assert a["unread_count"] == 2
-    assert a["available_count"] == 0 and a["missing_count"] == 2
+    assert a["returned_count"] == 0 and a["sync_status"] == "unknown"
     assert a["messages"] == []
     assert a["type"] == "unknown"

@@ -96,7 +96,7 @@ def test_dbreader_list_chats_resolves_group_name(tmp_path):
     db = str(tmp_path / "test.db")
     _make_test_db(db)
     reader = DbReader(db, key=None, _test_mode=True)
-    chats = reader.list_chats()
+    chats = reader.list_chats()["items"]
     by_id = {c["chat_id"]: c for c in chats}
     assert by_id["c1"]["name"] == "家族群"
     assert by_id["c1"]["type"] == "group"
@@ -108,7 +108,7 @@ def test_dbreader_list_chats_filters_by_type(tmp_path):
     db = str(tmp_path / "test.db")
     _make_test_db(db)
     reader = DbReader(db, key=None, _test_mode=True)
-    groups = reader.list_chats(chat_type="group")
+    groups = reader.list_chats(chat_type="group")["items"]
     assert len(groups) == 1 and groups[0]["chat_id"] == "c1"
 
 
@@ -116,7 +116,7 @@ def test_dbreader_get_history(tmp_path):
     db = str(tmp_path / "test.db")
     _make_test_db(db)
     reader = DbReader(db, key=None, _test_mode=True)
-    msgs = reader.get_history("c1", since_ts=0, until_ts=9999999999, limit=10)
+    msgs = reader.get_history("c1", since_ms=0, until_ms=9999999999000, limit=10)["items"]
     assert len(msgs) == 2
     assert msgs[0]["sender"] == "王小明"
     assert "https://youtu.be/xxx" in msgs[0]["urls"]
@@ -127,7 +127,7 @@ def test_dbreader_get_history_resolves_square_member_sender(tmp_path):
     db = str(tmp_path / "test.db")
     _make_test_db(db)
     reader = DbReader(db, key=None, _test_mode=True)
-    msgs = reader.get_history("sqc1", since_ts=0, until_ts=9999999999, limit=10)
+    msgs = reader.get_history("sqc1", since_ms=0, until_ms=9999999999000, limit=10)["items"]
     assert len(msgs) == 1
     assert msgs[0]["sender"] == "開放成員A"  # resolved from _squareMember, not _contact
 
@@ -136,6 +136,6 @@ def test_dbreader_get_contacts(tmp_path):
     db = str(tmp_path / "test.db")
     _make_test_db(db)
     reader = DbReader(db, key=None, _test_mode=True)
-    contacts = reader.get_contacts()
+    contacts = reader.get_contacts()["items"]
     names = [c["display_name"] for c in contacts]
     assert "王小明" in names

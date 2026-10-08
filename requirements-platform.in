@@ -1,0 +1,5 @@
+# MCP depends on pywin32 on Windows even though this project uses ctypes.
+# Pin MCP's documented minimum for each Python branch rather than implicitly
+# upgrading this untested Windows binary dependency during Linux resolution.
+pywin32==310 ; sys_platform == "win32" and python_version < "3.14"
+pywin32==311 ; sys_platform == "win32" and python_version >= "3.14"

@@ -16,6 +16,8 @@ import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Any
+from pathlib import Path
+from safety import CursorCodec, page
 
 # -- Cipher config: CONFIRMED via phase0.py against LINE 26.3 ------------------
 _CIPHER_SCHEME = "aes128cbc"
@@ -60,11 +62,17 @@ def _sane_limit(value: Any, default: int) -> int:
     capped at _MAX_LIMIT."""
     try:
         v = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if v <= 0:
         return default
     return min(v, _MAX_LIMIT)
+
+
+def _checked_id(value):
+    if not isinstance(value, str) or not value or len(value) > 256:
+        raise ValueError("Unsupported schema: IDs must be nonempty strings of at most 256 characters")
+    return value
 
 
 def _dict_row(cursor: Any, row: tuple) -> dict:
@@ -152,7 +160,7 @@ def _ts_to_iso(ts: int | None) -> str | None:
     if ts is None:
         return None
     # LINE _createdTime is epoch milliseconds (13-digit).
-    seconds = ts / 1000 if ts > 1_000_000_000_000 else ts
+    seconds = ts / 1000
     return datetime.fromtimestamp(seconds, tz=_TZ_TAIPEI).isoformat()
 
 
@@ -203,12 +211,15 @@ class DbReader:
         self._db_path = db_path
         self._key = key
         self._test_mode = _test_mode
+        self._cursors = CursorCodec()
 
     def _open(self):
-        if self._test_mode or self._key is None:
-            conn = sqlite3.connect(self._db_path)
+        if self._test_mode:
+            conn = sqlite3.connect(Path(self._db_path).resolve().as_uri() + "?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             return conn
+        if not self._key:
+            raise ValueError("Encrypted production reads require a key")
         return _open_encrypted(self._db_path, self._key)
 
     # -- name resolution -------------------------------------------------------
@@ -268,51 +279,83 @@ class DbReader:
 
     # -- public API ------------------------------------------------------------
     def list_chats(
-        self, query: str = "", chat_type: str = "", limit: int = 50
-    ) -> list[dict]:
-        limit = _sane_limit(limit, 50)
+        self, query: str = "", chat_type: str = "", limit: int = 50,
+        cursor: str | None = None, allowed_chat_ids: frozenset | None = None,
+        max_bytes: int = 262144,
+    ) -> dict:
+        limit = min(_sane_limit(limit, 50), 500)
+        scope = ["chats", query, chat_type, sorted(allowed_chat_ids) if allowed_chat_ids is not None else None]
+        after = self._cursors.decode(cursor, scope) if cursor else None
         conn = self._open()
         try:
             maps = self._name_maps(conn)
-            rows = list(conn.execute(
-                f"SELECT _id, _lastUpdatedTime FROM {_T_CHAT} "
-                f"ORDER BY _lastUpdatedTime DESC;"
-            ))
-            out = []
-            for r in rows:
-                name, ctype = self._resolve_chat(r["_id"], maps)
+            out, positions = [], []
+            for r in conn.execute(f"SELECT _id, _lastUpdatedTime FROM {_T_CHAT} ORDER BY _id COLLATE BINARY;"):
+                cid = _checked_id(r["_id"])
+                if after is not None and cid <= after:
+                    continue
+                if allowed_chat_ids is not None and cid not in allowed_chat_ids:
+                    continue
+                name, ctype = self._resolve_chat(cid, maps)
                 if chat_type and ctype != chat_type:
                     continue
-                if query and query.lower() not in (name or "").lower():
+                if query and query.casefold() not in (name or "").casefold():
                     continue
-                out.append({
-                    "chat_id": r["_id"],
-                    "name": name,
-                    "type": ctype,
-                    "last_message_at": _ts_to_iso(r["_lastUpdatedTime"]),
-                })
-                if len(out) >= limit:
+                out.append({"chat_id": cid, "name": name, "type": ctype,
+                            "last_message_at": _ts_to_iso(r["_lastUpdatedTime"])})
+                positions.append(cid)
+                if len(out) > limit:
                     break
-            return out
+            return page(out[:limit], positions[:limit], scope, self._cursors,
+                        len(out) > limit, max_bytes, consistency="live_metadata")
         finally:
             conn.close()
 
     def get_history(
-        self, chat_id: str, since_ts: int, until_ts: int, limit: int = 500
-    ) -> list[dict]:
-        limit = _sane_limit(limit, 500)
+        self, chat_id: str, since_ms: int, until_ms: int, limit: int = 100,
+        cursor: str | None = None, max_bytes: int = 262144,
+    ) -> dict:
+        """Keyset scan of local rows in [since_ms, until_ms), milliseconds.
+
+        Timestamp + unique _id prevent gaps for equal timestamps. The first
+        page's rowid ceiling reduces ordinary append/backfill changes, but SQLite
+        can reuse row IDs after deletion. Inserts, edits and deletions are not
+        frozen across calls: this is neither a snapshot nor remote sync proof.
+        """
+        if until_ms <= since_ms:
+            raise ValueError("until must be after since")
+        limit = min(_sane_limit(limit, 100), 500)
+        scope = ["history", chat_id, since_ms, until_ms]
+        position = self._cursors.decode(cursor, scope) if cursor else None
         conn = self._open()
         try:
+            if position is None:
+                ceiling = next(iter(conn.execute(f"SELECT COALESCE(MAX(rowid), 0) AS n FROM {_T_MESSAGE};")))["n"]
+                last_time, last_id = since_ms, None
+            else:
+                ceiling, last_time, last_id = position
+            primary = [r["name"] for r in conn.execute(f"PRAGMA table_info({_T_MESSAGE});") if r["pk"]]
+            if primary != ["_id"]:
+                raise ValueError("Unsupported schema: _message._id must be the sole primary key")
+            # _id must be a non-null unique identifier in supported LINE schema.
             contact_map = self._contacts_map(conn)
-            # mcp passes bounds in seconds; _createdTime is milliseconds.
-            since_ms, until_ms = since_ts * 1000, until_ts * 1000
             rows = list(conn.execute(
-                f"SELECT * FROM {_T_MESSAGE} "
-                f"WHERE _chatId=? AND _createdTime>=? AND _createdTime<=? "
-                f"ORDER BY _createdTime ASC LIMIT ?;",
-                (chat_id, since_ms, until_ms, limit)
+                f"SELECT * FROM {_T_MESSAGE} WHERE _chatId=? AND _createdTime>=? "
+                f"AND _createdTime<? AND rowid<=? "
+                f"AND (? IS NULL OR _createdTime>? OR (_createdTime=? AND _id COLLATE BINARY>?)) "
+                f"ORDER BY _createdTime ASC, _id COLLATE BINARY ASC LIMIT ?;",
+                (chat_id, since_ms, until_ms, ceiling, last_id, last_time, last_time, last_id, limit + 1),
             ))
-            return [parse_message_row(dict(r), contact_map) for r in rows]
+            items, positions = [], []
+            for r in rows[:limit]:
+                _checked_id(r["_id"])
+                item = parse_message_row(dict(r), contact_map)
+                item["message_id"] = r["_id"]
+                items.append(item)
+                positions.append([ceiling, r["_createdTime"], r["_id"]])
+            return page(items, positions, scope, self._cursors, len(rows) > limit, max_bytes,
+                        coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
+                        range_since_ms=since_ms, range_until_ms=until_ms)
         finally:
             conn.close()
 
@@ -336,102 +379,85 @@ class DbReader:
                 out.add(r["_mid"])
         return out
 
-    def _unread_messages(
-        self, conn, chat_id: str, unread_count: int,
-        contact_map: dict[str, str], limit: int
-    ) -> tuple[list[dict], int]:
-        """Return (most recent locally-present messages, available count).
-
-        We deliberately do NOT range from _chat._firstUnreadId: that pointer is a
-        stale low-water mark for some chats, so "messages after it" can be the whole
-        history (observed: unread_count=1 but 97k messages after the marker). The
-        authoritative unread NUMBER is _unreadCount, so available is capped by it:
-
-            available = min(unread_count, messages present locally for this chat)
-
-        When bodies are not synced yet, fewer than unread_count messages exist on
-        disk and available drops below unread_count -- a high-confidence "missing"
-        signal. LINE gives no reliable per-message read boundary, so when the chat
-        DOES have >= unread_count messages on disk we optimistically treat the most
-        recent unread_count as the unread ones (they usually are)."""
-        if unread_count <= 0:
-            return [], 0
-        present_total = list(conn.execute(
-            f"SELECT count(*) c FROM {_T_MESSAGE} WHERE _chatId=?;", (chat_id,)
-        ))[0]["c"]
-        available = min(unread_count, present_total)
-        if available == 0:
-            return [], 0
+    def _unread_messages(self, conn, chat_id, unread_count, contact_map, limit):
+        # No trustworthy per-message read boundary: these may ALL be read rows.
         rows = list(conn.execute(
             f"SELECT * FROM {_T_MESSAGE} WHERE _chatId=? "
-            f"ORDER BY _createdTime DESC LIMIT ?;",
-            (chat_id, min(unread_count, limit))
+            f"ORDER BY _createdTime DESC, _id COLLATE BINARY DESC LIMIT ?;",
+            (chat_id, min(unread_count, limit) + 1),
         ))
-        rows.reverse()  # chronological
-        return [parse_message_row(dict(r), contact_map) for r in rows], available
+        more = len(rows) > min(unread_count, limit)
+        chosen = rows[:min(unread_count, limit)]
+        chosen.reverse()
+        messages = [{**parse_message_row(dict(r), contact_map), "message_id": _checked_id(r["_id"])}
+                    for r in chosen]
+        return messages, more
 
     def get_unread(
-        self, limit_chats: int = 50, include_official: bool = False,
-        per_chat_limit: int = 200
-    ) -> list[dict]:
-        """List chats with unread messages, honest about LINE's lazy sync.
-        Per chat: available_count = unread bodies readable locally now (<= unread),
-        missing_count = unread LINE has not downloaded yet (open the app to fetch)."""
-        limit_chats = _sane_limit(limit_chats, 50)
-        per_chat_limit = _sane_limit(per_chat_limit, 200)
+        self, limit_chats: int = 20, include_official: bool = False,
+        per_chat_limit: int = 50, total_message_limit: int = 500,
+        cursor: str | None = None, allowed_chat_ids: frozenset | None = None,
+        max_bytes: int = 262144,
+    ) -> dict:
+        """Unread counts plus explicitly approximate recent local messages."""
+        limit_chats = min(_sane_limit(limit_chats, 20), 100)
+        per_chat_limit = min(_sane_limit(per_chat_limit, 50), 500)
+        total_message_limit = min(_sane_limit(total_message_limit, 500), 500)
+        scope = ["unread", include_official, per_chat_limit,
+                 sorted(allowed_chat_ids) if allowed_chat_ids is not None else None]
+        after = self._cursors.decode(cursor, scope) if cursor else None
         conn = self._open()
         try:
             maps = self._name_maps(conn)
             contact_map = self._contacts_map(conn)
             official = set() if include_official else self._official_mids(conn)
-            rows = list(conn.execute(
-                f"SELECT _id, _unreadCount, _lastUpdatedTime "
-                f"FROM {_T_CHAT} WHERE _unreadCount>0 "
-                f"ORDER BY _lastUpdatedTime DESC;"
-            ))
-            out = []
+            rows = conn.execute(f"SELECT _id, _unreadCount FROM {_T_CHAT} "
+                                f"WHERE _unreadCount>0 ORDER BY _id COLLATE BINARY;")
+            out, positions, used, more = [], [], 0, False
             for r in rows:
-                cid = r["_id"]
-                if cid in official:
+                cid = _checked_id(r["_id"])
+                if (after is not None and cid <= after) or cid in official:
                     continue
-                name, ctype = self._resolve_chat(cid, maps)
-                unread_n = r["_unreadCount"] or 0
-                msgs, available = self._unread_messages(
-                    conn, cid, unread_n, contact_map, per_chat_limit
-                )
-                out.append({
-                    "chat_id": cid,
-                    "name": name,
-                    "type": ctype,
-                    "unread_count": unread_n,
-                    "available_count": available,
-                    "missing_count": max(0, unread_n - available),
-                    "fully_synced": available >= unread_n,
-                    "messages": msgs,
-                })
-                if len(out) >= limit_chats:
+                if allowed_chat_ids is not None and cid not in allowed_chat_ids:
+                    continue
+                if len(out) >= limit_chats or used >= total_message_limit:
+                    more = True
                     break
-            return out
+                name, ctype = self._resolve_chat(cid, maps)
+                count = max(0, r["_unreadCount"] or 0)
+                cap = min(per_chat_limit, total_message_limit - used)
+                msgs, more_local = self._unread_messages(conn, cid, count, contact_map, cap)
+                out.append({"chat_id": cid, "name": name, "type": ctype,
+                            "unread_count": count, "returned_count": len(msgs),
+                            "selection": "latest_local_approximation", "sync_status": "unknown",
+                            "unread_boundary_verified": False,
+                            "messages_limited": count > cap and more_local,
+                            "more_local_messages": more_local, "messages": msgs})
+                positions.append(cid)
+                used += len(msgs)
+            return page(out, positions, scope, self._cursors, more, max_bytes,
+                        coverage="approximate_recent_local_messages", consistency="live_metadata")
         finally:
             conn.close()
 
-    def get_contacts(self, query: str = "") -> list[dict]:
+    def get_contacts(self, query: str = "", limit: int = 50,
+                     cursor: str | None = None, max_bytes: int = 262144) -> dict:
+        limit = min(_sane_limit(limit, 50), 100)
+        scope = ["contacts", query]
+        after = self._cursors.decode(cursor, scope) if cursor else None
         conn = self._open()
         try:
-            if query:
-                rows = list(conn.execute(
-                    f"SELECT _mid, _displayName, _displayNameOverridden "
-                    f"FROM {_T_CONTACT} WHERE _displayName LIKE ? "
-                    f"OR _displayNameOverridden LIKE ?;",
-                    (f"%{query}%", f"%{query}%")
-                ))
-            else:
-                rows = list(conn.execute(
-                    f"SELECT _mid, _displayName, _displayNameOverridden "
-                    f"FROM {_T_CONTACT};"
-                ))
-            return [{"contact_id": r["_mid"],
-                     "display_name": r["_displayNameOverridden"] or r["_displayName"]}
-                    for r in rows]
+            # Escape LIKE wildcards so user text remains a literal substring.
+            pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            rows = list(conn.execute(
+                f"SELECT _mid, _displayName, _displayNameOverridden FROM {_T_CONTACT} "
+                f"WHERE (? IS NULL OR _mid COLLATE BINARY>?) "
+                f"AND (?='' OR _displayName LIKE ? ESCAPE '\\' OR _displayNameOverridden LIKE ? ESCAPE '\\') "
+                f"ORDER BY _mid COLLATE BINARY LIMIT ?;", (after, after, query, pattern, pattern, limit + 1),
+            ))
+            items = [{"contact_id": _checked_id(r["_mid"]), "display_name": r["_displayNameOverridden"] or r["_displayName"]}
+                     for r in rows[:limit]]
+            return page(items, [r["_mid"] for r in rows[:limit]], scope, self._cursors,
+                        len(rows) > limit, max_bytes, consistency="live_metadata")
         finally:
             conn.close()

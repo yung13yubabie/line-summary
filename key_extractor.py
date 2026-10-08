@@ -132,7 +132,7 @@ def confirm_user_consent() -> bool:
     print("=" * 58)
     print("This tool reads LINE's process memory to extract the")
     print("database encryption key. The key is used locally only")
-    print("and is NEVER written to disk or sent over any network.")
+    print("by this program; OS paging or crash dumps may retain it.")
     print("=" * 58)
     return input("Proceed? Type 'yes' to continue: ").strip().lower() == 'yes'
 
@@ -168,7 +168,7 @@ def extract_key(edb_path: str, require_consent: bool = True) -> str | None:
     if not candidates:
         raise RuntimeError(
             "Could not read LINE process memory. "
-            "Try running as Administrator."
+            "Check LINE version and process permissions; do not elevate the MCP host automatically."
         )
 
     for candidate in candidates:

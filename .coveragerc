@@ -1,4 +1,9 @@
 [run]
+source =
+    db_reader
+    key_extractor
+    line_mcp_server
+    safety
 # Coverage target is the shipping runtime only. spike/ is a one-off reverse-
 # engineering harness (its "test" is running it against live LINE), tools/ is
 # an interactive real-mouse-automation script not unit-testable in CI, and
@@ -16,6 +21,6 @@ exclude_lines =
     raise NotImplementedError
 show_missing = True
 # Enforced floor for the clean-clone (offline) suite. The memory-scan path in
-# key_extractor is only exercised with LINE running (integration), so the full
-# suite lands higher; this floor guards the reproducible offline baseline.
+# key_extractor is not validated against real LINE by this suite; this floor
+# guards the reproducible synthetic baseline without claiming live coverage.
 fail_under = 85

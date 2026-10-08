@@ -22,7 +22,9 @@ def test_load_settings_returns_defaults_when_missing():
     with patch('builtins.open', side_effect=FileNotFoundError):
         s = _load_settings()
     assert s["db_path"] == ""
-    assert s["require_consent"] is False
+    assert s["enabled"] is False
+    assert s["allowed_chat_ids"] == frozenset()
+    assert s["allow_contacts"] is False
 
 
 def test_find_edb_path_returns_none_when_dir_empty(tmp_path):

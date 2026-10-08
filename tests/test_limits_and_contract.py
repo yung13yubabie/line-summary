@@ -11,6 +11,7 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 import line_mcp_server as srv
+from tests.helpers import authorize, result
 from db_reader import DbReader, _sane_limit
 
 
@@ -44,48 +45,51 @@ def _leak_db(path):
 def test_negative_per_chat_limit_does_not_leak_read_messages(tmp_path):
     db = str(tmp_path / "leak.db"); _leak_db(db)
     r = DbReader(db, key=None, _test_mode=True)
-    g1 = next(c for c in r.get_unread(per_chat_limit=-1) if c["chat_id"] == "g1")
-    assert g1["available_count"] == 2
-    assert len(g1["messages"]) <= g1["available_count"]  # was 5 before the fix
+    g1 = next(c for c in r.get_unread(per_chat_limit=-1)["items"] if c["chat_id"] == "g1")
+    assert g1["returned_count"] == 2
+    assert len(g1["messages"]) <= g1["returned_count"]  # was 5 before the fix
 
 
 def test_limit_chats_zero_returns_all_not_one(tmp_path):
     db = str(tmp_path / "leak.db"); _leak_db(db)
     r = DbReader(db, key=None, _test_mode=True)
-    assert len(r.get_unread(limit_chats=0)) == 2   # was 1 before the fix
+    assert len(r.get_unread(limit_chats=0)["items"]) == 2   # was 1 before the fix
 
 
 def test_get_history_negative_limit_is_bounded(tmp_path):
     db = str(tmp_path / "leak.db"); _leak_db(db)
     r = DbReader(db, key=None, _test_mode=True)
-    neg = r.get_history("g1", 0, 9_999_999_999, limit=-1)
-    default = r.get_history("g1", 0, 9_999_999_999, limit=500)
+    neg = r.get_history("g1", 0, 9_999_999_999, limit=-1)["items"]
+    default = r.get_history("g1", 0, 9_999_999_999, limit=500)["items"]
     assert len(neg) == len(default)  # -1 clamps to default, not "unlimited"
 
 
 # --- MCP wrapper -> reader contract (the anti-slop gap) ---------------------
-def test_line_get_history_passes_parsed_bounds_to_reader():
+def test_line_get_history_passes_parsed_bounds_to_reader(monkeypatch):
+    authorize(monkeypatch)
     fake = MagicMock()
-    fake.get_history.return_value = ["ok"]
+    fake.get_history.return_value = result(["ok"])
     since, until = "2026-06-15T00:00:00+08:00", "2026-06-16T00:00:00+08:00"
     with patch.object(srv, "_get_reader", return_value=fake):
         srv.line_get_history("chatX", since, until, limit=7)
     fake.get_history.assert_called_once_with(
         chat_id="chatX",
-        since_ts=srv._parse_iso8601(since),
-        until_ts=srv._parse_iso8601(until),
-        limit=7,
+        since_ms=srv._parse_iso8601(since),
+        until_ms=srv._parse_iso8601(until),
+        limit=7, cursor=None, max_bytes=262144,
     )
-    # regression guard: if the wrapper ignored since/until, since_ts==until_ts
+    # regression guard: if the wrapper ignored since/until, since_ms==until_ms
     call = fake.get_history.call_args.kwargs
-    assert call["since_ts"] != call["until_ts"]
+    assert call["since_ms"] != call["until_ms"]
 
 
-def test_line_get_unread_forwards_its_arguments():
+def test_line_get_unread_forwards_its_arguments(monkeypatch):
+    policy = authorize(monkeypatch)
     fake = MagicMock()
-    fake.get_unread.return_value = []
+    fake.get_unread.return_value = result()
     with patch.object(srv, "_get_reader", return_value=fake):
         srv.line_get_unread(limit_chats=3, include_official=True, per_chat_limit=9)
     fake.get_unread.assert_called_once_with(
-        limit_chats=3, include_official=True, per_chat_limit=9
+        limit_chats=3, include_official=True, per_chat_limit=9, total_message_limit=500,
+        cursor=None, allowed_chat_ids=policy["allowed_chat_ids"], max_bytes=262144
     )

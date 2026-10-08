@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "db_path": "",
+  "allowed_chat_ids": [],
+  "allow_chat_discovery": false,
+  "allow_contacts": false,
+  "max_messages_per_call": 500,
+  "max_response_bytes": 262144,
+  "max_session_messages": 5000,
+  "max_session_bytes": 2097152,
+  "max_range_days": 31,
+  "allowed_since": null,
+  "allowed_until": null
+}

@@ -1,0 +1,5 @@
+# Test tools only. Install together with requirements.txt.
+# Constrain shared dependencies to the runtime lock when compiling.
+-c requirements.txt
+pytest==8.4.2
+pytest-cov==6.2.1
