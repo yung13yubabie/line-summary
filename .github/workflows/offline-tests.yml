@@ -28,7 +28,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install hash-locked runtime and test dependencies
-        run: python -m pip install --require-hashes --only-binary=:all: -r requirements.txt -r requirements-test.txt
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.txt -r requirements-test.txt
       - name: Run synthetic tests only
         # No --run-live-line, real settings, account DB, keys, UI automation,
         # or artifact uploads. This does not validate Windows LINE behavior.
