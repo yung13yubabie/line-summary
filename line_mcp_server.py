@@ -5,18 +5,82 @@ permissions, resets budgets, writes summaries, or invokes LINE UI automation.
 """
 import glob
 import json
+import logging
 import os
 import re
 import threading
 from datetime import datetime, timezone
 from types import MappingProxyType
+from pathlib import Path
 
+from mcp import __file__ as _MCP_PACKAGE_FILE
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ResourceError, ToolError
 from db_reader import DbReader, _sane_limit
 from key_extractor import extract_key
 from safety import json_size
 
-mcp = FastMCP("line-summary")
+_MCP_LOG_DIRECTORY = Path(_MCP_PACKAGE_FILE).resolve().parent
+_DISABLED_DIAGNOSTIC = "LINE access disabled. Configure settings.json locally, then restart the server."
+
+
+class _MCPDiagnosticFilter(logging.Filter):
+    def filter(self, record):
+        try:
+            sdk_origin = Path(record.pathname).resolve().is_relative_to(_MCP_LOG_DIRECTORY)
+        except (OSError, TypeError, ValueError):
+            sdk_origin = False
+        # SDK transport validation also uses the root logger directly.
+        if record.name == "mcp" or record.name.startswith("mcp.") or sdk_origin:
+            record.msg = "MCP diagnostic details suppressed by the LINE error boundary"
+            record.args = ()
+            record.exc_info = record.exc_text = record.stack_info = None
+        return True
+
+
+def _install_diagnostic_filters():
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(item, _MCPDiagnosticFilter) for item in handler.filters):
+            handler.addFilter(_MCPDiagnosticFilter())
+    for name in ("", "mcp.server.lowlevel.server", "mcp.server.stdio", "mcp.shared.session"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(item, _MCPDiagnosticFilter) for item in logger.filters):
+            logger.addFilter(_MCPDiagnosticFilter())
+        for handler in logger.handlers:
+            if not any(isinstance(item, _MCPDiagnosticFilter) for item in handler.filters):
+                handler.addFilter(_MCPDiagnosticFilter())
+
+
+class _SafeCoreMCP(FastMCP):
+    """Keep legacy success contracts; suppress raw SDK/backend error details."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _install_diagnostic_filters()
+
+    async def call_tool(self, name, arguments):
+        try:
+            # Preserve FastMCP's original validation and ad-hoc conversions.
+            return await super().call_tool(name, arguments)
+        except Exception as error:
+            cause = error.__cause__
+            disabled = (type(cause) is PermissionError and len(cause.args) == 1
+                        and type(cause.args[0]) is str and cause.args[0] == _DISABLED_DIAGNOSTIC)
+            raise ToolError(_DISABLED_DIAGNOSTIC if disabled else "LINE tool request failed") from None
+
+    async def get_prompt(self, name, arguments=None):
+        try:
+            return await super().get_prompt(name, arguments)
+        except Exception:
+            raise ValueError("LINE prompt request failed") from None
+
+    async def read_resource(self, uri):
+        try:
+            return await super().read_resource(uri)
+        except Exception:
+            raise ResourceError("LINE resource request failed") from None
+
+
+mcp = _SafeCoreMCP("line-summary")
 _DEFAULTS = {
     "enabled": False,
     "db_path": "",
