@@ -4,6 +4,9 @@ source =
     key_extractor
     line_mcp_server
     safety
+    plugin_adapter
+    plugin_runtime
+    mock_privacy
 # Coverage target is the shipping runtime only. spike/ is a one-off reverse-
 # engineering harness (its "test" is running it against live LINE), tools/ is
 # an interactive real-mouse-automation script not unit-testable in CI, and

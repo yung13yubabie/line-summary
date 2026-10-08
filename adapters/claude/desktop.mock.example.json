@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "line-summary-mock": {
+      "command": "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\plugin_adapter.py",
+        "--mode",
+        "mock"
+      ]
+    }
+  }
+}

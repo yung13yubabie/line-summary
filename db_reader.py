@@ -314,6 +314,7 @@ class DbReader:
     def get_history(
         self, chat_id: str, since_ms: int, until_ms: int, limit: int = 100,
         cursor: str | None = None, max_bytes: int = 262144,
+        include_source_ref: bool = False,
     ) -> dict:
         """Keyset scan of local rows in [since_ms, until_ms), milliseconds.
 
@@ -351,11 +352,100 @@ class DbReader:
                 _checked_id(r["_id"])
                 item = parse_message_row(dict(r), contact_map)
                 item["message_id"] = r["_id"]
+                if include_source_ref:
+                    item["source_ref"] = {"kind": "local_line_message", "chat_id": chat_id,
+                                          "message_id": r["_id"], "sent_at": item["sent_at"]}
                 items.append(item)
                 positions.append([ceiling, r["_createdTime"], r["_id"]])
             return page(items, positions, scope, self._cursors, len(rows) > limit, max_bytes,
                         coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
                         range_since_ms=since_ms, range_until_ms=until_ms)
+        finally:
+            conn.close()
+
+    def search_messages(
+        self, chat_id: str, query: str, since_ms: int, until_ms: int,
+        limit: int = 100, cursor: str | None = None, max_bytes: int = 262144,
+    ) -> dict:
+        """Search exact, case-sensitive Unicode text in one local chat/range.
+
+        ``query`` is 1..256 characters and cannot be whitespace-only. Its
+        whitespace is otherwise preserved exactly; there is no case folding,
+        Unicode normalization, wildcard, regex, or token interpretation.
+        ``instr`` receives the literal query as a bound SQL value.
+
+        Results cover matching local rows in [since_ms, until_ms), ordered by
+        (_createdTime, _id). The signed cursor binds the chat, literal query and
+        range. As with history, a rowid ceiling reduces ordinary appends but
+        does not create a snapshot: rowid reuse, edits and deletions can affect
+        later pages. No neighboring-message/context expansion is supported.
+        """
+        _checked_id(chat_id)
+        if not isinstance(query, str) or not 1 <= len(query) <= 256 or not query.strip():
+            raise ValueError("query must contain 1..256 characters and not be whitespace-only")
+        # Lone surrogates are not valid Unicode scalar values and cannot be
+        # bound as SQLite UTF-8 text. Reject them before opening the database.
+        try:
+            query.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("query must be valid Unicode text") from None
+        if type(since_ms) is not int or type(until_ms) is not int:
+            raise ValueError("since_ms and until_ms must be integer milliseconds")
+        if not -(2 ** 63) <= since_ms < until_ms < 2 ** 63:
+            raise ValueError("until must be after since within SQLite integer milliseconds")
+        limit = min(_sane_limit(limit, 100), 500)
+        scope = ["search_messages", chat_id, query, since_ms, until_ms]
+        position = self._cursors.decode(cursor, scope) if cursor else None
+        conn = self._open()
+        try:
+            primary = [r["name"] for r in conn.execute("PRAGMA table_info(_message);") if r["pk"]]
+            if primary != ["_id"]:
+                raise ValueError("Unsupported schema: _message._id must be the sole primary key")
+            # Freshness is deliberately scoped to this chat and requested
+            # range, never the whole database or another (possibly private)
+            # chat. This is a local timestamp, not evidence of LINE sync.
+            local = next(iter(conn.execute(
+                "SELECT COALESCE(MAX(rowid), 0) AS ceiling, MAX(_createdTime) AS latest "
+                "FROM _message WHERE _chatId=? AND _createdTime>=? AND _createdTime<?;",
+                (chat_id, since_ms, until_ms),
+            )))
+            if position is None:
+                ceiling, last_time, last_id = local["ceiling"], since_ms, None
+            else:
+                ceiling, last_time, last_id = position
+            rows = list(conn.execute(
+                "SELECT * FROM _message WHERE _chatId=? AND _createdTime>=? "
+                "AND _createdTime<? AND rowid<=? AND instr(_text, ?)>0 "
+                "AND (? IS NULL OR _createdTime>? OR (_createdTime=? AND _id COLLATE BINARY>?)) "
+                "ORDER BY _createdTime ASC, _id COLLATE BINARY ASC LIMIT ?;",
+                (chat_id, since_ms, until_ms, ceiling, query,
+                 last_id, last_time, last_time, last_id, limit + 1),
+            ))
+            contact_map = self._contacts_map(conn)
+            items, positions = [], []
+            for r in rows[:limit]:
+                mid = _checked_id(r["_id"])
+                item = parse_message_row(dict(r), contact_map)
+                # Search always exposes the text that matched, even for a
+                # non-text content type whose history renderer omits _text.
+                item["content"] = r["_text"]
+                item.update(chat_id=chat_id, message_id=mid)
+                item["source_ref"] = {
+                    "kind": "local_line_message", "chat_id": chat_id,
+                    "message_id": mid, "sent_at": item["sent_at"],
+                }
+                items.append(item)
+                positions.append([ceiling, r["_createdTime"], mid])
+            return page(
+                items, positions, scope, self._cursors, len(rows) > limit, max_bytes,
+                coverage="local_rows_only", consistency="live_keyset_scan",
+                database_changes_may_affect_pagination=True,
+                range_since_ms=since_ms, range_until_ms=until_ms,
+                query=query, match_mode="case_sensitive_literal_substring",
+                fetched_at=datetime.now(timezone.utc).isoformat(), source_sync_at=None,
+                source_latest_at=_ts_to_iso(local["latest"]),
+                source_latest_at_scope="chat_and_requested_range",
+            )
         finally:
             conn.close()
 
@@ -397,7 +487,7 @@ class DbReader:
         self, limit_chats: int = 20, include_official: bool = False,
         per_chat_limit: int = 50, total_message_limit: int = 500,
         cursor: str | None = None, allowed_chat_ids: frozenset | None = None,
-        max_bytes: int = 262144,
+        max_bytes: int = 262144, include_source_ref: bool = False,
     ) -> dict:
         """Unread counts plus explicitly approximate recent local messages."""
         limit_chats = min(_sane_limit(limit_chats, 20), 100)
@@ -427,6 +517,10 @@ class DbReader:
                 count = max(0, r["_unreadCount"] or 0)
                 cap = min(per_chat_limit, total_message_limit - used)
                 msgs, more_local = self._unread_messages(conn, cid, count, contact_map, cap)
+                if include_source_ref:
+                    for message in msgs:
+                        message["source_ref"] = {"kind": "local_line_message", "chat_id": cid,
+                                                 "message_id": message["message_id"], "sent_at": message["sent_at"]}
                 out.append({"chat_id": cid, "name": name, "type": ctype,
                             "unread_count": count, "returned_count": len(msgs),
                             "selection": "latest_local_approximation", "sync_status": "unknown",

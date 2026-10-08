@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "line-summary-synthetic-only": {
+      "command": "REPLACE_WITH_ABSOLUTE_PYTHON_EXECUTABLE",
+      "args": [
+        "REPLACE_WITH_ABSOLUTE_ISOLATED_MOCK_DIRECTORY/plugin_adapter.py",
+        "--mode",
+        "mock"
+      ],
+      "cwd": "REPLACE_WITH_ABSOLUTE_ISOLATED_MOCK_DIRECTORY"
+    }
+  }
+}

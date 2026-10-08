@@ -3,3 +3,6 @@
 -c requirements.txt
 pytest==8.4.2
 pytest-cov==6.2.1
+
+# Direct use in wire outputSchema conformance tests; constrained to runtime lock.
+jsonschema==4.26.0
