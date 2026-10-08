@@ -1,0 +1,17 @@
+{
+  "mcp": {
+    "allowed": ["line-summary-mock"]
+  },
+  "mcpServers": {
+    "line-summary-mock": {
+      "command": "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\plugin_adapter.py",
+        "--mode",
+        "mock"
+      ],
+      "cwd": "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR",
+      "trust": false
+    }
+  }
+}

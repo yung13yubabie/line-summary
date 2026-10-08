@@ -1,0 +1,9 @@
+{
+  "mode": "disabled",
+  "requests_per_minute": 10,
+  "min_interval_seconds": 2.0,
+  "max_messages_per_call": 100,
+  "max_response_bytes": 262144,
+  "max_session_messages": 5000,
+  "max_session_bytes": 2097152
+}

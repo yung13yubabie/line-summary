@@ -30,3 +30,9 @@ tests/test_phase0_spike.py
 # Real chat exports dropped in the repo root during manual testing (contain real
 # message text and real member names) — must never be committed.
 比賽用_*
+
+# Local prototype settings (never put credentials here).
+plugin_settings.json
+
+# Parallel coverage shards are local test outputs.
+.coverage.*

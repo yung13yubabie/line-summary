@@ -1,0 +1,77 @@
+{
+  "spec_version": 1,
+  "checked_on": "2026-10-08",
+  "purpose": "Instructions-only synthetic MCP workflow; not a platform plugin installer",
+  "archive_name": "line-summary-mock-skill.zip",
+  "format": "agent-skill-directory-zip",
+  "root_directory": "line-summary-mock",
+  "files": [
+    {
+      "source": "plugin/skills/line-summary-mock/SKILL.md",
+      "archive_path": "line-summary-mock/SKILL.md"
+    }
+  ],
+  "frontmatter": {
+    "required": [
+      "name",
+      "description"
+    ],
+    "name": "line-summary-mock",
+    "name_max_chars": 64,
+    "description_max_chars": 200
+  },
+  "contains_executables": false,
+  "contains_mcp_config": false,
+  "contains_credentials": false,
+  "real_data_implemented": false,
+  "actual_host_acceptance": "NOT_RUN",
+  "host_routes": [
+    {
+      "host": "Claude Skills",
+      "route": "Directory-root ZIP upload; MCP connection remains separate",
+      "layout": "line-summary-mock/SKILL.md",
+      "actual_test": "NOT_RUN",
+      "source": "https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
+    },
+    {
+      "host": "Claude Code",
+      "route": "Extract and manually place Skill in an isolated project's skill directory",
+      "layout": ".claude/skills/line-summary-mock/SKILL.md",
+      "actual_test": "NOT_RUN",
+      "source": "https://code.claude.com/docs/en/skills"
+    },
+    {
+      "host": "Qwen Code",
+      "route": "Extract and manually place Skill in an isolated project's skill directory",
+      "layout": ".qwen/skills/line-summary-mock/SKILL.md",
+      "actual_test": "NOT_RUN",
+      "source": "https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/"
+    },
+    {
+      "host": "Perplexity Computer",
+      "route": "Use the separate root-layout ZIP or upload the extracted SKILL.md directly; do not use the directory-layout ZIP",
+      "layout": "SKILL.md at ZIP root, or a direct .md file",
+      "actual_test": "NOT_RUN",
+      "source": "https://www.perplexity.ai/help-center/en/articles/13914413-how-to-use-computer-skills"
+    }
+  ],
+  "unsupported_claims": [
+    "No universal six-provider installer",
+    "No proof of consumer ChatGPT, Gemini, Grok, DeepSeek or Qwen Skill ZIP acceptance",
+    "No automatic MCP connection, local process installation, URL, tunnel, or account access",
+    "No deepseek Harness Skill ZIP upload command claimed"
+  ],
+  "sources": [
+    "https://agentskills.io/specification"
+  ],
+  "archives": {
+    "directory": {
+      "filename": "line-summary-mock-skill.zip",
+      "member": "line-summary-mock/SKILL.md"
+    },
+    "root": {
+      "filename": "line-summary-mock-skill-root.zip",
+      "member": "SKILL.md"
+    }
+  }
+}

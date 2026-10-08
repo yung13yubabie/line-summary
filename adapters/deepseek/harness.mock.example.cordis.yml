@@ -1,0 +1,24 @@
+[
+  {
+    "insert": [
+      {
+        "id": "mcp-line-summary-mock",
+        "name": "@deepseek-ai/dsh-mcp-client",
+        "config": {
+          "serverName": "line-summary-mock",
+          "transport": "stdio",
+          "command": "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\.venv\\Scripts\\python.exe",
+          "args": [
+            "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR\\plugin_adapter.py",
+            "--mode",
+            "mock"
+          ],
+          "cwd": "C:\\REPLACE_WITH_ISOLATED_MOCK_DIR",
+          "reconnect": {
+            "enabled": false
+          }
+        }
+      }
+    ]
+  }
+]
