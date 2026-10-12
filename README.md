@@ -8,7 +8,7 @@
 
 加密查詢在一次查詢一次啟動的子程序執行。主程序透過本機 pipe 傳入來源路徑與金鑰；兩者不放入命令列或新增環境變數。子程序要求既有 DB、WAL、SHM 都可讀，固定三個檔案身分，使用原生 SQLite WAL 交易與 OS 鎖讀取；缺失或無法讀取 SHM 時直接回報錯誤。它不建立來源 SHM、磁碟副本，也不使用 `immutable=1`。
 
-本版限制的二進位組合是 Windows x86-64、CPython 3.11、`apsw-sqlite3mc 3.53.3.1`（SQLite 3.53.3），來源須位於本機磁碟；網路磁碟的 mapped-view 一致性不受支持。runtime 鎖定 `mcp 1.29.0`，APSW hash 僅鎖定此 PyPI wheel；其他平台或版本須另行驗證。四個 MCP 查詢入口仍使用相同的 `DbReader` 方法。
+本版限制的二進位組合是 Windows x86-64、CPython 3.11、`apsw-sqlite3mc 3.53.3.1`（SQLite 3.53.3），來源須位於本機磁碟；網路磁碟的 mapped-view 一致性不受支持。runtime 鎖定 `mcp 1.29.0`；APSW lock 收錄既有 Windows／Linux、CPython 3.11／3.12 CI matrix 的四個 x86-64 wheel hash，均核對 PyPI metadata 與實際下載檔案。wheel 安裝驗證不擴大 Windows native reader 的支援範圍，其他平台或版本須另行驗證。四個 MCP 查詢入口仍使用相同的 `DbReader` 方法。
 
 建立真正的 SQLite 讀交易後，程式短暫持有共享 CKPT／RECOVER／read-slot 鎖以阻止 checkpoint、recovery 與 WAL reset，同時允許 writer append。透過唯讀 SHM mapping 和已開啟的 SQLite WAL handle，核對有效雙 header、nBackfill、已宣告提交 frames 的長度、salt 與 checksum。檢查不在開交易前執行，不製作 DB/WAL snapshot；已提交 WAL 損壞會明確失敗，正常 checkpoint 的空 WAL 與已提交界線後的未完成尾框仍可讀。無效 SHM header 明確失敗，不宣稱能從已遺失或同時損壞的 WAL/SHM 還原歷史提交。
 

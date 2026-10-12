@@ -12,9 +12,13 @@ anyio==4.15.1 \
     #   mcp
     #   sse-starlette
     #   starlette
-# Reviewed Windows CPython 3.11 x86-64 wheel, SHA-256 from PyPI release files.
-# Regenerate the universal lock before supporting another Python/OS build.
+# CPython 3.11/3.12 x86-64 wheels for the existing Windows/Linux CI matrix.
+# Each SHA-256 matches PyPI release metadata and independently downloaded bytes.
+# https://pypi.org/project/apsw-sqlite3mc/3.53.3.1/#files
 apsw-sqlite3mc==3.53.3.1 \
+    --hash=sha256:2ef17a9ec95bcc06d516f1445b6af2787950765f9f627848a022bfcd4183df6e \
+    --hash=sha256:4ce9c8a2f28b1b74851bed76ebf18dffaa448a0e875d994d6a9597f5396c2bad \
+    --hash=sha256:6897e9ed71ee9a194f4b077b655f65b4ef3363c2a321a7f627f4824187514c4b \
     --hash=sha256:ebe2dfa54ca73dd6ffe30d92b8aee0fd98eeb4a7efb54e158d3da6c51241cf61
     # via -r requirements.in
 attrs==26.1.0 \
