@@ -5,12 +5,16 @@ from pathlib import Path
 import shutil
 
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 
 from db_reader import _open_encrypted
 from readonly_errors import SnapshotUnavailable
-from readonly_guard import CREATE, GENERIC_READ, Guard, INVALID
+if os.name == "nt":
+    from readonly_guard import CREATE, GENERIC_READ, Guard, INVALID
 from tests.test_readonly_client_lifecycle import handles
 from tests.test_readonly_worker import SYNTHETIC_KEY, _digests, _encrypted_writer
+
+pytestmark = WINDOWS_NATIVE
 
 
 def test_native_vfs_write_create_delete_truncate_mapping_are_rejected(tmp_path):

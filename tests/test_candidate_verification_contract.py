@@ -8,8 +8,11 @@ import uuid
 
 import apsw
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 import db_reader as db
 import key_extractor as ke
+
+pytestmark = WINDOWS_NATIVE
 
 ROOT=Path(__file__).resolve().parents[2]
 KEY32='aB0123456789CdEf'*2

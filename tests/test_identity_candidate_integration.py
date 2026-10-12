@@ -8,9 +8,12 @@ import traceback
 
 import apsw
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 import db_reader as db
 import key_extractor as ke
 from tests.test_process_identity import Kernel, bind, signed_pe
+
+pytestmark = WINDOWS_NATIVE
 
 VALID32 = 'aB0123456789CdEf' * 2
 VALID64 = VALID32 + VALID32.swapcase()

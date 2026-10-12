@@ -4,9 +4,12 @@ import hashlib
 
 import apsw
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 
 from db_reader import _open_encrypted, probe_key
 from tests.hot_wal_fixture import retain_hot_wal
+
+pytestmark = WINDOWS_NATIVE
 
 
 @pytest.mark.parametrize('key', ['Ab3d' * 8, 'Ac7e' * 16])

@@ -11,9 +11,11 @@ from unittest.mock import patch
 
 import apsw
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 
 from db_reader import DbReader, _open_encrypted
-from readonly_guard import CREATE, GENERIC_READ, Guard, INVALID
+if os.name == "nt":
+    from readonly_guard import CREATE, GENERIC_READ, Guard, INVALID
 from readonly_errors import SnapshotUnavailable
 
 
@@ -39,6 +41,7 @@ def _digests(path):
             for suffix in ("", "-wal", "-shm")}
 
 
+@WINDOWS_NATIVE
 def test_active_encrypted_wal_is_read_once_without_source_byte_changes(tmp_path):
     source = tmp_path / "active.edb"
     writer = _encrypted_writer(source)
@@ -58,6 +61,7 @@ def test_active_encrypted_wal_is_read_once_without_source_byte_changes(tmp_path)
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_missing_source_shm_fails_without_creating_it(tmp_path):
     live = tmp_path / "live.edb"
     writer = _encrypted_writer(live)
@@ -75,6 +79,7 @@ def test_missing_source_shm_fails_without_creating_it(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_invalid_static_shm_uses_safe_read_path_or_fails(tmp_path):
     live = tmp_path / "live.edb"
     writer = _encrypted_writer(live)
@@ -99,6 +104,7 @@ def test_invalid_static_shm_uses_safe_read_path_or_fails(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_damaged_wal_header_never_returns_old_base_as_success(tmp_path):
     live = tmp_path / "live.edb"
     writer = _encrypted_writer(live)
@@ -117,6 +123,7 @@ def test_damaged_wal_header_never_returns_old_base_as_success(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_wrong_key_is_redacted_and_no_key_in_argv(tmp_path, capsys):
     source = tmp_path / "private-sentinel.edb"
     writer = _encrypted_writer(source)
@@ -141,6 +148,7 @@ def test_wrong_key_is_redacted_and_no_key_in_argv(tmp_path, capsys):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_reader_holds_snapshot_across_two_writers_and_checkpoint(tmp_path):
     source = tmp_path / "concurrent.edb"
     first_writer = _encrypted_writer(source)
@@ -169,6 +177,7 @@ def test_reader_holds_snapshot_across_two_writers_and_checkpoint(tmp_path):
         first_writer.close()
 
 
+@WINDOWS_NATIVE
 def test_source_replacement_is_blocked_while_reader_pins_handles(tmp_path):
     source = tmp_path / "pinned.edb"
     writer = _encrypted_writer(source)
@@ -186,6 +195,7 @@ def test_source_replacement_is_blocked_while_reader_pins_handles(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_callback_exception_fails_closed_and_handles_release(tmp_path):
     source = tmp_path / "callback.edb"
     writer = _encrypted_writer(source)
@@ -207,6 +217,7 @@ def test_callback_exception_fails_closed_and_handles_release(tmp_path):
     assert not guard.pins
 
 
+@WINDOWS_NATIVE
 def test_repeated_start_stop_and_bounded_cancel(tmp_path):
     source = tmp_path / "repeated.edb"
     writer = _encrypted_writer(source)
@@ -228,6 +239,7 @@ def test_repeated_start_stop_and_bounded_cancel(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_sql_cannot_change_connection_settings(tmp_path):
     source = tmp_path / "read-only.edb"
     writer = _encrypted_writer(source)
@@ -242,6 +254,7 @@ def test_sql_cannot_change_connection_settings(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_existing_shm_unreadable_fails_clearly(tmp_path):
     source = tmp_path / "active.edb"
     writer = _encrypted_writer(source)
@@ -264,6 +277,7 @@ def test_existing_shm_unreadable_fails_clearly(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_production_reader_preserves_all_four_query_methods(tmp_path):
     source = tmp_path / "four-tools.edb"
     writer = _encrypted_writer(source)
@@ -287,6 +301,7 @@ def test_production_reader_preserves_all_four_query_methods(tmp_path):
         writer.close()
 
 
+@WINDOWS_NATIVE
 def test_pipe_input_and_output_are_bounded(tmp_path):
     source = tmp_path / "bounds.edb"
     writer = _encrypted_writer(source)
@@ -322,6 +337,7 @@ def test_source_boundary_error_in_metadata_query_is_not_suppressed():
         reader.list_chats()
 
 
+@WINDOWS_NATIVE
 def test_blocked_pipe_write_obeys_deadline_and_reaps_child():
     from readonly_client import WorkerConnection
     import readonly_client

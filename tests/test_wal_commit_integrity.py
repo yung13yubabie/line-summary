@@ -6,10 +6,13 @@ import threading
 import time
 
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 
 from db_reader import _open_encrypted
 from readonly_errors import SnapshotUnavailable
 from tests.test_readonly_worker import SYNTHETIC_KEY, _digests, _encrypted_writer
+
+pytestmark = WINDOWS_NATIVE
 
 
 @pytest.mark.parametrize("mode", ["empty", "tail_short", "committed_byte_corrupt"])

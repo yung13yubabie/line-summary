@@ -8,9 +8,12 @@ import threading
 import time
 
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 
 import readonly_client as client
 from readonly_errors import SnapshotUnavailable
+
+pytestmark = WINDOWS_NATIVE
 
 
 HANDSHAKE = (

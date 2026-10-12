@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from tests.native_platform import WINDOWS_NATIVE
 import db_reader
 import key_extractor as ke
 
@@ -275,6 +276,7 @@ def test_extract_filters_invalid_candidate_without_probing(monkeypatch):
     probe.assert_not_called()
 
 
+@WINDOWS_NATIVE
 def test_scanned_passphrase_opens_only_synthetic_codec_database(monkeypatch, tmp_path, request):
     apsw = pytest.importorskip("apsw")
     memory = apsw.Connection(":memory:")

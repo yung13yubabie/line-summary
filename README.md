@@ -192,7 +192,7 @@ MCP 的無效參數、未知工具／提示／資源及未預期 backend 錯誤�
 
 固定歷史反例未被刪除或改寫為通過：舊 identity 模型仍為 44 passed／2 failed，舊 strict 候選模型仍為 632 passed／32 failed。它們保留 native 模型與「候選 enumeration 後須經真 DB 驗證」的契約差異，未計入完整 source 的 519 個通過案例；各審查組有重疊，不能相加成總案例數。
 
-本機合成結果不代表 CI 通過；請查看該 PR commit 的 checks。既有 CI 含其他 OS／Python matrix，但本輪 Windows reader 的支援範圍仍以上述鎖定組合為限。真實資料整合、效能與生命週期仍待驗證；tunnel／ChatGPT、手機及乾淨機器驗收也尚未完成。
+本機合成結果不代表 CI 通過；請查看該 PR commit 的 checks。既有 CI 保留 Ubuntu 22.04／Windows 2022 與 Python 3.11／3.12 四組 matrix：Windows 執行實際 Win32 event、pipe、handle 與加密 WAL 合成測試；Linux 明確跳過這些 native case，執行可跨平台的解析、身分政策、MCP、隱私與預算測試，並驗證不支援的平台在啟動 child 或開啟 DB 前拒絕讀取。hash 驗證與 coverage 門檻不因平台降低。這不擴大本輪 Windows reader 的支援範圍。真實資料整合、效能與生命週期仍待驗證；tunnel／ChatGPT、手機及乾淨機器驗收也尚未完成。
 
 ## 歷史修復紀錄（2026-10-08）
 
