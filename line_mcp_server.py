@@ -9,13 +9,37 @@ import logging
 import os
 import re
 import threading
+import sys
+import warnings
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import MappingProxyType
 from pathlib import Path
 
-from mcp import __file__ as _MCP_PACKAGE_FILE
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ResourceError, ToolError
+def _cli_exception_diagnostic(*args):
+    sys.stderr.write("LINE server error; diagnostic details suppressed\n")
+
+
+@contextmanager
+def _dependency_warning_boundary():
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        yield
+    if captured:
+        sys.stderr.write("LINE dependency startup warning; details suppressed\n")
+
+
+if __name__ == "__main__":
+    sys.excepthook = _cli_exception_diagnostic
+    threading.excepthook = _cli_exception_diagnostic
+
+
+# SDK/Pydantic import warnings include installation paths and source lines.
+# Keep an actionable fixed stderr notice without forwarding warning objects.
+with _dependency_warning_boundary():
+    from mcp import __file__ as _MCP_PACKAGE_FILE
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ResourceError, ToolError
 from db_reader import DbReader, _sane_limit
 from key_extractor import extract_key
 from safety import json_size
@@ -54,7 +78,8 @@ def _install_diagnostic_filters():
 class _SafeCoreMCP(FastMCP):
     """Keep legacy success contracts; suppress raw SDK/backend error details."""
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        with _dependency_warning_boundary():
+            super().__init__(*args, **kwargs)
         _install_diagnostic_filters()
 
     async def call_tool(self, name, arguments):
@@ -81,6 +106,11 @@ class _SafeCoreMCP(FastMCP):
 
 
 mcp = _SafeCoreMCP("line-summary")
+
+
+def _register_tool(function):
+    with _dependency_warning_boundary():
+        return mcp.tool()(function)
 _DEFAULTS = {
     "enabled": False,
     "db_path": "",
@@ -228,7 +258,7 @@ def _deliver(result, message_count, policy):
     return result
 
 
-@mcp.tool()
+@_register_tool
 def line_list_chats(query: str = "", chat_type: str = "", limit: int = 50,
                     cursor: str | None = None) -> dict:
     """Page through allowed chat metadata; cursor must use the same filters.
@@ -248,7 +278,7 @@ def line_list_chats(query: str = "", chat_type: str = "", limit: int = 50,
         return _deliver(result, 0, policy)
 
 
-@mcp.tool()
+@_register_tool
 def line_get_history(chat_id: str, since: str, until: str, limit: int = 100,
                      cursor: str | None = None) -> dict:
     """Page local history in [since, until), both ISO 8601 with explicit timezone.
@@ -274,7 +304,7 @@ def line_get_history(chat_id: str, since: str, until: str, limit: int = 100,
         return _deliver(result, len(result["items"]), policy)
 
 
-@mcp.tool()
+@_register_tool
 def line_get_unread(limit_chats: int = 20, include_official: bool = False,
                     per_chat_limit: int = 50, cursor: str | None = None) -> dict:
     """Unread counts with approximate latest local messages from allowed chats.
@@ -297,7 +327,7 @@ def line_get_unread(limit_chats: int = 20, include_official: bool = False,
         return _deliver(result, count, policy)
 
 
-@mcp.tool()
+@_register_tool
 def line_get_contacts(query: str = "", limit: int = 50, cursor: str | None = None) -> dict:
     """Paginated contact lookup, disabled unless explicitly enabled locally.
 

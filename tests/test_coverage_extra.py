@@ -195,8 +195,8 @@ def test_confirm_user_consent_no():
 
 def test_find_line_pid_non_integer_field_returns_none():
     import key_extractor as ke
-    with patch("subprocess.run") as m:
-        m.return_value = MagicMock(stdout='"LINE.exe","notapid","Console"\n')
+    with patch("subprocess.run") as m, patch.object(ke, "_enumerate_line_pids", return_value=[]):
+        m.return_value = MagicMock(stdout='"LINE.exe","notapid","Console"\n', returncode=0)
         assert ke.find_line_pid() is None
 
 
