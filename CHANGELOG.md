@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Process identity and read-only active WAL repair
+
+### Changed
+
+- Preserve the original stdio entry and four MCP tool names, descriptions and input schemas. Default-disabled policy, explicit database/chat scope and output budgets remain in place.
+- Check the target process identity before memory scanning and validate candidates by actual encrypted database reads; a matching hex format alone is not a verified key. Startup and recovery diagnostics do not echo private input or raw backend exceptions.
+- Run encrypted reads in a dedicated Windows worker with pinned DB/WAL/SHM identities, read-only mappings and native transaction/lock checks. Missing SHM or inconsistent committed-WAL evidence fails closed instead of returning a stale base database.
+- Use bounded worker I/O, cooperative cancellation and explicit cleanup-incomplete errors. An OS process spawn cannot be forcibly bounded by Python timers; a forced native exit does not prove immediate source release.
+- Pin MCP 1.29.0 and apsw-sqlite3mc 3.53.3.1 (SQLite 3.53.3); the tested reader combination is Windows x86-64 / CPython 3.11.9.
+
+### Verification and limits
+
+- Independent synthetic core review: 519 passed, 0 failed, 5 live tests deselected, using pytest 8.4.2. Real guarded stdio confirmed the full four-tool contract.
+- Four additional native-reader counterexamples used valid synthetic keys and retained SHM while clearing/truncating committed WAL. They first demonstrated a successful encrypted read, then verified rejection, unchanged source bytes and clean child exit after damage.
+- Preserved legacy identity (44 passed / 2 failed) and strict candidate-model (632 passed / 32 failed) counterexamples remain reported as failures of those older models; they were not rewritten to inflate the passing source suite. Review groups overlap and must not be summed.
+- Local results are separate from CI status. Real-data integration is incomplete; performance and lifecycle behavior remain unverified. The repair stays draft and must not be merged or represented as live-ready. Live LINE accounts, community threads, multimedia, clean-machine installation, other ABI/platform combinations and network drives are unverified.
+- No ChatGPT facade, tunnel activation or mock-adapter PR is included. The separate facade remains disabled. Cached data does not prove current LINE login or complete cloud synchronization; lost WAL/SHM history cannot be reconstructed by this repair.
+
 ## 2026-10-08 — Core safety repair (breaking API)
 
 Based on `bd3569e80af56cff342cab9690e6a6d0cb2f4f93`.

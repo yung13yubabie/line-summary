@@ -5,6 +5,14 @@ import pytest
 pytest_plugins = ["pytester"]
 
 
+def pytest_configure(config):
+    # The opt-in tests copy this hook into a tiny synthetic project that has
+    # no package/helper. Load storage fixtures only in the actual source tree.
+    from pathlib import Path
+    if Path(__file__).with_name("hot_wal_fixture.py").is_file():
+        config.pluginmanager.import_plugin("tests.hot_wal_fixture")
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--run-live-line",
@@ -33,6 +41,16 @@ def isolate_offline_server_settings(request, monkeypatch, tmp_path):
     if request.node.get_closest_marker("integration"):
         return
     import line_mcp_server as server
+    import key_extractor
+
+    class ForbiddenNativeAccess(BaseException):
+        pass
+
+    def no_native_access(*args, **kwargs):
+        raise ForbiddenNativeAccess("Offline tests forbid native process access")
+
+    monkeypatch.setattr(key_extractor, "_load_kernel32", no_native_access)
+    monkeypatch.setattr(key_extractor, "_enumerate_line_pids", no_native_access)
 
     monkeypatch.setattr(server, "_SETTINGS_PATH", str(tmp_path / "absent-settings.json"))
     monkeypatch.setattr(server, "_reader", None)
