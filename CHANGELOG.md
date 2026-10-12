@@ -15,7 +15,7 @@
 - Independent synthetic core review: 519 passed, 0 failed, 5 live tests deselected, using pytest 8.4.2. Real guarded stdio confirmed the full four-tool contract.
 - Four additional native-reader counterexamples used valid synthetic keys and retained SHM while clearing/truncating committed WAL. They first demonstrated a successful encrypted read, then verified rejection, unchanged source bytes and clean child exit after damage.
 - Preserved legacy identity (44 passed / 2 failed) and strict candidate-model (632 passed / 32 failed) counterexamples remain reported as failures of those older models; they were not rewritten to inflate the passing source suite. Review groups overlap and must not be summed.
-- Local results are separate from CI status. Live LINE accounts, community threads, multimedia, clean-machine installation, other ABI/platform combinations and network drives are unverified.
+- Local results are separate from CI status. Real-data integration is incomplete; performance and lifecycle behavior remain unverified. The repair stays draft and must not be merged or represented as live-ready. Live LINE accounts, community threads, multimedia, clean-machine installation, other ABI/platform combinations and network drives are unverified.
 - No ChatGPT facade, tunnel activation or mock-adapter PR is included. The separate facade remains disabled. Cached data does not prove current LINE login or complete cloud synchronization; lost WAL/SHM history cannot be reconstructed by this repair.
 
 ## 2026-10-08 — Core safety repair (breaking API)

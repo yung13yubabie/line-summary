@@ -2,7 +2,7 @@
 
 用 Claude Code 經由本機 stdio MCP 讀取 LINE 電腦版已儲存的聊天記錄，整理獲准聊天室與時間範圍的摘要。核心預設停用，需由使用者設定資料庫與聊天室允許清單。資料範圍限本機記錄，不能據此證明 LINE 雲端歷史已全部同步。
 
-本輪修復保留四個 CLI MCP 工具，加入程序身分檢查、候選金鑰的實際解密驗證，以及 Windows active WAL 唯讀 worker。已驗範圍是鎖定 runtime 的合成測試；真 LINE 帳號、ChatGPT／手機連線及乾淨機器安裝尚未完成驗收。
+本輪修復保留四個 CLI MCP 工具，加入程序身分檢查、候選金鑰的實際解密驗證，以及 Windows active WAL 唯讀 worker。已驗範圍是鎖定 runtime 的合成測試；**真實資料整合尚未完成，效能與生命週期仍待驗證**。本修復維持 draft，尚不可宣稱 live 可用或合併；ChatGPT／手機連線及乾淨機器安裝也尚未完成驗收。
 
 ## Windows 加密資料庫唯讀邊界
 
@@ -192,7 +192,7 @@ MCP 的無效參數、未知工具／提示／資源及未預期 backend 錯誤�
 
 固定歷史反例未被刪除或改寫為通過：舊 identity 模型仍為 44 passed／2 failed，舊 strict 候選模型仍為 632 passed／32 failed。它們保留 native 模型與「候選 enumeration 後須經真 DB 驗證」的契約差異，未計入完整 source 的 519 個通過案例；各審查組有重疊，不能相加成總案例數。
 
-本機合成結果不代表 CI 通過；請查看該 PR commit 的 checks。既有 CI 含其他 OS／Python matrix，但本輪 Windows reader 的支援範圍仍以上述鎖定組合為限。真 LINE、tunnel／ChatGPT、手機及乾淨機器驗收尚未完成。
+本機合成結果不代表 CI 通過；請查看該 PR commit 的 checks。既有 CI 含其他 OS／Python matrix，但本輪 Windows reader 的支援範圍仍以上述鎖定組合為限。真實資料整合、效能與生命週期仍待驗證；tunnel／ChatGPT、手機及乾淨機器驗收也尚未完成。
 
 ## 歷史修復紀錄（2026-10-08）
 
