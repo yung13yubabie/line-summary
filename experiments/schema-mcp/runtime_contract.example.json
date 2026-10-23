@@ -1,0 +1,9 @@
+{
+  "python": "3.11.9",
+  "site_packages": "<APPROVED_LOCAL_SITE_PACKAGES>",
+  "distributions": {
+    "mcp": "1.29.0",
+    "anyio": "4.15.1",
+    "pydantic": "2.13.5"
+  }
+}

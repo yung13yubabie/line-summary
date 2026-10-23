@@ -1,0 +1,559 @@
+{
+  "scope": "BOUNDED_SYNTHETIC_BOOTSTRAP_FUNCTIONAL_CHECKS",
+  "overall_release_status": "NOT_READY_FOR_HOST_OR_REAL_DATA",
+  "new_unit_tests": {
+    "passed": 34,
+    "failed": 0,
+    "command": "<approved-base-python> -I -S -B -m unittest discover -s tests -p test_*.py",
+    "author_and_independent": true
+  },
+  "actual_forbidden_api_probe": {
+    "passed": 6,
+    "failed": 0,
+    "command": "<approved-base-python> -I -S -B tests/guard_probe.py",
+    "operations_prevented_before_execution": true
+  },
+  "independent_native": [
+    {
+      "origin": "independent",
+      "case": "cancel_then_success",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 9.03099999999904,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        }
+      ],
+      "receipt_sha256": "69898d5d6d0182cbd6d16eb99803a7ad87749a074b02eaaa26de47877686cb10"
+    },
+    {
+      "origin": "independent",
+      "case": "eof_active",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 3.812000000001717,
+      "failed_checks": [],
+      "results": [],
+      "receipt_sha256": "cb386db1ed50e6c3e630127cbd6b241c98e993b083b7e0bf9172fe54b0fea50f"
+    },
+    {
+      "origin": "independent",
+      "case": "invalid_db",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 3.937000000001717,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "2c58d3cd6504699e627e41452f696a3af18e476b3e114cf400878430d16c0622"
+    },
+    {
+      "origin": "independent",
+      "case": "missing_shm",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 6.25,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "bd0ba0a01634bb0f6f74153c17a704d8a7df88de3d9dae82f54f57042d0da5e0"
+    },
+    {
+      "origin": "independent",
+      "case": "timeout",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 5.26600000000326,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "cleanup_unconfirmed",
+          "successful": false,
+          "application_ack": false,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "48ad4f2298735bd55e948e70768c0173865b2a2b156400b8c6d3a1954426fac9"
+    },
+    {
+      "origin": "independent",
+      "case": "missing_wal",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 5.5310000000026776,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "8f13014e0ac96a2d8881ef0e589f6abff19dc8d4b5ebcb95a9e8a5a622fd2eda"
+    },
+    {
+      "origin": "independent",
+      "case": "cross_request",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 4.610000000000582,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        },
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        }
+      ],
+      "receipt_sha256": "0b8dec1d3e1ce994648836d42dc7d0610d196a464fdb186cf3fd741a8aab1cfc"
+    }
+  ],
+  "author_attempts_including_failures": [
+    {
+      "origin": "author",
+      "case": "basic",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero",
+        "one_server_observation",
+        "expected_fresh_source_count"
+      ],
+      "results": [],
+      "receipt_sha256": "aa516625bfc591cd94a79079cf639063b067047298438329694c37d036f2601d"
+    },
+    {
+      "origin": "author",
+      "case": "basic",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero",
+        "one_server_observation",
+        "expected_fresh_source_count"
+      ],
+      "results": [],
+      "receipt_sha256": "b7e4405900351b1690f62d5a9b87486fbd80bf225169c0452f10741308b11a9c"
+    },
+    {
+      "origin": "author",
+      "case": "basic",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 6.717999999997119,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        }
+      ],
+      "receipt_sha256": "c00a0601270b3efa3458884542e81c1beac42862c19832708962d11ee1e6ddd6"
+    },
+    {
+      "origin": "author",
+      "case": "cancel",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero",
+        "one_server_observation",
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "56b38cf374c4e883f1d5a48a41f16a7ceca6244d7e00836e0b0442d06bf4e629"
+    },
+    {
+      "origin": "author",
+      "case": "cancel_then_success",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "ed80946df82f76bba1e399a1d0ff9b640c0b72b730c1296a56704ce663aac39d"
+    },
+    {
+      "origin": "author",
+      "case": "cross_request",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 5.671999999998661,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero"
+      ],
+      "results": [
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        },
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        }
+      ],
+      "receipt_sha256": "455ac6ec28bd293d3366ebd70360d3869113dc8ba9a3d039592ef4ace8d9e563"
+    },
+    {
+      "origin": "author",
+      "case": "eof_active",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "cancellation_reached_service",
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "a0b02eaae542c9fe255d87c1991406d5c7fc906fba0b938cece4a8125149c3d0"
+    },
+    {
+      "origin": "author",
+      "case": "eof_idle",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [],
+      "results": [],
+      "receipt_sha256": "4c51f58537c6069a821b28200cb4b17b019cfbeb87c56bdda44a8c18eabc7837"
+    },
+    {
+      "origin": "author",
+      "case": "exception",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 4.796999999998661,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "cleanup_unconfirmed",
+          "successful": false,
+          "application_ack": false,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "59a48a872b90e9b2150ae78341052731eb007b9cf7e3c6dbeb06e6b419aec836"
+    },
+    {
+      "origin": "author",
+      "case": "invalid_db",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 5.578000000001339,
+      "failed_checks": [
+        "failure_has_no_counts_or_ack"
+      ],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "06ea1bf48d1fe84a437268f6ff3365b225c7e23b07fbb14903defa4df1e0090a"
+    },
+    {
+      "origin": "author",
+      "case": "missing_shm",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 4.390999999999622,
+      "failed_checks": [
+        "failure_has_no_counts_or_ack"
+      ],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "4725361f1a50dddf62e54682c31ef4d88545039a3bf485bfe4de8ea434492ffd"
+    },
+    {
+      "origin": "author",
+      "case": "missing_wal",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 5.5,
+      "failed_checks": [
+        "failure_has_no_counts_or_ack"
+      ],
+      "results": [
+        {
+          "status": "failed",
+          "successful": false,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "c175ba69f13fbff3f5b88274021072f405747eeab5c79cb9b3078ab4a888c0b8"
+    },
+    {
+      "origin": "author",
+      "case": "timeout",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "189502d1fdc2e1e6c1788b8ba57e05c7b5397296f9a4856a4b0b65bec63d693f"
+    },
+    {
+      "origin": "author",
+      "case": "wrong_key",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 5.531999999999243,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "cleanup_unconfirmed",
+          "successful": false,
+          "application_ack": false,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "bd27680f8ac527431e6794d9c8a45fa5f843b6a64d5fd651c672da317c7171fb"
+    },
+    {
+      "origin": "author",
+      "case": "basic",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 8.265999999999622,
+      "failed_checks": [],
+      "results": [
+        {
+          "status": "completed",
+          "successful": true,
+          "application_ack": true,
+          "os_release_confirmed": true,
+          "retry_required": false,
+          "counts": {
+            "table_count": 2,
+            "view_count": 1
+          }
+        }
+      ],
+      "receipt_sha256": "d9b4fbc1f9c8147ec4904d502abdfec23de6485380571d09067d4b9aa880b8ca"
+    },
+    {
+      "origin": "author",
+      "case": "cancel_then_success",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 5.328000000001339,
+      "failed_checks": [
+        "actual_wal_aggregate_counts",
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [
+        {
+          "status": "busy",
+          "successful": false,
+          "application_ack": false,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "79e3fa2a982c0fb1d24fd6b300ad7dd0840132d960baac96360d4db5a166ef5a"
+    },
+    {
+      "origin": "author",
+      "case": "timeout",
+      "accepted": false,
+      "error_kind": null,
+      "startup_seconds": 6.421999999998661,
+      "failed_checks": [
+        "exact_failure_contract_without_counts"
+      ],
+      "results": [
+        {
+          "status": "cleanup_unconfirmed",
+          "successful": false,
+          "application_ack": false,
+          "os_release_confirmed": true,
+          "retry_required": false
+        }
+      ],
+      "receipt_sha256": "c3f0590f509cc3f55a1ee1676581db28e5b2fb70b285b3adf5683bd588503b38"
+    },
+    {
+      "origin": "author",
+      "case": "cancel",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 8.110000000000582,
+      "failed_checks": [],
+      "results": [],
+      "receipt_sha256": "66cd4e1a42a7f38f638c235bffea3c71736daf43baf06778acd43506d879bc61"
+    },
+    {
+      "origin": "author",
+      "case": "cancel_then_success",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero",
+        "one_server_observation",
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "a507970798d015337c0cc31113960be8394a68fac7fa64d4a6461d5ff4d32481"
+    },
+    {
+      "origin": "author",
+      "case": "eof_active",
+      "accepted": false,
+      "error_kind": "TimeoutError",
+      "startup_seconds": null,
+      "failed_checks": [
+        "server_no_force",
+        "server_exit_zero",
+        "one_server_observation",
+        "expected_fresh_source_count",
+        "fixtures_after_native_owned_start"
+      ],
+      "results": [],
+      "receipt_sha256": "1508c44e91b9dde8e16ca2c604b992c41f5a4578e92c53447c8f50d020f228e4"
+    },
+    {
+      "origin": "author",
+      "case": "eof_idle",
+      "accepted": true,
+      "error_kind": null,
+      "startup_seconds": 9.906999999999243,
+      "failed_checks": [],
+      "results": [],
+      "receipt_sha256": "196496ea5ed5ba989ce7e10c466418592d5e5969e33ccad3ff45d4cdd8eb2ce1"
+    }
+  ],
+  "stability_gate": {
+    "status": "FAIL_OPEN",
+    "import_phase_exceeded_initialize_10s": true,
+    "root_cause_confirmed": false,
+    "earlier_two_successful_calls_followed_by_forced_eof": true,
+    "later_independent_cross_request_clean": true,
+    "timeouts_not_extended_to_obtain_pass": true
+  },
+  "limits": [
+    "All database files, discovery and key candidates are synthetic. Native provider and readonly reader are actual product code.",
+    "Successful cases observe WAL-only schema as table_count=2, view_count=1; DB/WAL/SHM bytes remain unchanged.",
+    "Wrong-key exhaustion, injected exception and deadline carry conservative application cleanup status even when outer OS release is proved.",
+    "Actual desktop-host registration, host inventory, approvals, ChatGPT web/mobile, real data and deployment are NOT RUN.",
+    "Historical 518 unit and 8 stdio checks, disabled-preview acceptance and root CI are separate results; none were rerun here.",
+    "Original preview metadata patch raw replay remains FAIL from line-ending mismatch. Both alternative product patches replayed successfully in independent byte-only review."
+  ],
+  "no_real_LINE_read": true,
+  "no_host_configuration_changed": true,
+  "no_new_persistent_access": true,
+  "no_raw_receipt_or_wire_uploaded": true,
+  "independent_receipt_crosscheck": {
+    "accepted": true,
+    "native_cases": 7,
+    "operations": 9,
+    "actual_readers": 18,
+    "native_retries": 0,
+    "all_run_bound_commits_and_release_proofs": true,
+    "all_inner_unforced": true,
+    "independent_review_sha256": "ddf894d74ca416579f6e722a5e4a56cb66bebf12d0bf4bb0725e5e421f1ce276",
+    "timeout_proof": {
+      "completion_status": "cleanup_unconfirmed",
+      "completion_primary_status": "deadline_exceeded",
+      "completion_deadline_kind": "stage",
+      "completion_timeout_stage": "source_prepare"
+    }
+  }
+}
