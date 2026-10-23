@@ -87,6 +87,11 @@
       "sha256": "e1ae098aa79fc8399457ccc5a43ca6b302f0902582986d0295c7204d6d4551de",
       "role": "new_development"
     },
+    "lifecycle_trace.py": {
+      "bytes": 4104,
+      "sha256": "ede00c1337c7e1fa2f044cf08efa753a3ec604687f874f34faf5e9e9fa3c628f",
+      "role": "new_reliability_diagnostics"
+    },
     "patches/MCP_SCHEMA.patch": {
       "bytes": 28562,
       "sha256": "f109ed769af2ed82cf532a2c77b32a25784c9b619b78f1611aedbb6adb620fa5",
@@ -113,9 +118,14 @@
       "role": "new_development"
     },
     "README.md": {
-      "bytes": 4710,
-      "sha256": "e12cb086740f48ac83fe24dd5f7870553cabd68556690493d2b407a5778b6e80",
+      "bytes": 6979,
+      "sha256": "3869de9683c167af9974851c816160c369df8d796c2b2b31bd1d167a96b0b901",
       "role": "new_development"
+    },
+    "RELIABILITY_RESULTS.json": {
+      "bytes": 26212,
+      "sha256": "930af0ac923d4e2d3385b4df647aaefefebdcf61cdffc27ed6f2eea2931b652d",
+      "role": "new_reliability_diagnostics"
     },
     "RESULTS.json": {
       "bytes": 17169,
@@ -248,18 +258,18 @@
       "role": "new_development"
     },
     "synthetic_stdio.py": {
-      "bytes": 6687,
-      "sha256": "28498a580d192092e1aeb18ea63f2a8419eebd2e7dc426a1c30a56a394939af9",
+      "bytes": 8116,
+      "sha256": "00d4a1f774c68628d64ff553049d9416af6de4140f5936a7d2be15bd53b7bd07",
       "role": "new_development"
     },
     "synthetic_worker.py": {
-      "bytes": 13462,
-      "sha256": "a37e06f0a8daa504745e6af3c3d6a07ebe2464a7f586a1cc21124bd5b67b8a0e",
+      "bytes": 14266,
+      "sha256": "516c6b46a005306c0604aa748ef847f7fedc0bd1639f630be5e571177e9e43c2",
       "role": "new_development"
     },
     "tests/bootstrap_cases.py": {
-      "bytes": 10675,
-      "sha256": "c2c193e143738df33ac8a3a5710b1186e0efae898ad14ca8426b2aba2f9d1ff4",
+      "bytes": 11354,
+      "sha256": "18ff4ce9a4a6e848fb68a37ff5e481bbf81fa03fc6f157b1a00865501c7dd096",
       "role": "new_development"
     },
     "tests/guard_probe.py": {
@@ -267,19 +277,34 @@
       "sha256": "19bb7bb5f0154e2201b6d1f185b5605c42629d4fb92cc394428c52f805efb697",
       "role": "new_development"
     },
+    "tests/owned_cpu.py": {
+      "bytes": 1211,
+      "sha256": "04d9da02e09e127ce20cfcdd489cbb9363c7f0adea33bc027b7e3651430d1e75",
+      "role": "new_reliability_diagnostics"
+    },
     "tests/server_cleanup.py": {
-      "bytes": 4747,
-      "sha256": "b1ed06f4a55e088dcf8912d8171f7200f35785d93eb71c8bc27674adc29a005b",
+      "bytes": 7360,
+      "sha256": "fc3c71433e38c1e2ce0918238b6da6c777cf06795a6f978fddcedf154fece40f",
       "role": "new_development"
     },
     "tests/stdio_client.py": {
-      "bytes": 11434,
-      "sha256": "8e755ae994d3bd3846e09e930822abafcaa7cb6f8b3e08cb9e44125640a8f205",
+      "bytes": 13344,
+      "sha256": "345f57f9cd09a7e478cc50d95d6fa0a8e410b6bde9a2d9ec443ca3344c0c79a8",
       "role": "new_development"
     },
+    "tests/test_lifecycle_trace.py": {
+      "bytes": 6193,
+      "sha256": "0d91b6ba959a992fd9d92941507a27cfcf95cdfb1e9f4a664b65ad0338063767",
+      "role": "new_reliability_diagnostics"
+    },
+    "tests/test_owned_cpu.py": {
+      "bytes": 1724,
+      "sha256": "32e55919ea7aaf0b4bb2d831173a669e0897f714330722e8ddd960fd889ba3a7",
+      "role": "new_reliability_diagnostics"
+    },
     "tests/test_server_cleanup.py": {
-      "bytes": 10269,
-      "sha256": "e7f027a4490da8366e7eb56003f7c0df11d23b4b420903aba7d534e0d2fbde9f",
+      "bytes": 11319,
+      "sha256": "db386cce643846c4fb2d5d29a6e7ce2618a8cd147e69c6f83ba36cb17f101af8",
       "role": "new_development"
     },
     "tests/test_synthetic_guard.py": {
@@ -288,8 +313,8 @@
       "role": "new_development"
     },
     "tests/test_synthetic_startup.py": {
-      "bytes": 3347,
-      "sha256": "03bfb34632c822ed340b2679e3374b431c4bdd61c2bee38d07e21423039b52ab",
+      "bytes": 4295,
+      "sha256": "881a9968b0f1f85163279b555766668c5e9cfb84ad81106de136bdee6ae87f1e",
       "role": "new_development"
     },
     "tests/test_synthetic_worker_boundaries.py": {
@@ -328,7 +353,15 @@
       "role": "preserved_validation"
     }
   },
-  "results_record": "RESULTS.json",
+  "results_record": "RELIABILITY_RESULTS.json",
   "manifest_self_hash": "not included; use Git blob/tree identity",
-  "accepted_package_manifest_sha256": "8731169fa24aa731248663546028635836cc4259af8844f782316b9769cfb75f"
+  "accepted_package_manifest_sha256": "8731169fa24aa731248663546028635836cc4259af8844f782316b9769cfb75f",
+  "followup_of_commit": "0daf5afe03c1f67657960458882f3f3f0e3e5561",
+  "followup_of_manifest_sha256": "d07609a6758905c2ba1326481bc93ecdd9b3414feb9dc8259d9c4c0d4d930fd2",
+  "historical_results_record": {
+    "file": "RESULTS.json",
+    "commit": "0daf5afe03c1f67657960458882f3f3f0e3e5561",
+    "unchanged": true
+  },
+  "tested_python_snapshot_sha256": "0f9bcd00787d52f8bd085f3f1411f4996a3433617a0a585b103e7393f416193c"
 }

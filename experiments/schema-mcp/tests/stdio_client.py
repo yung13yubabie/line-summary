@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 out=Path(sys.argv[1]).resolve();mode=sys.argv[2];site=Path(sys.argv[3]).resolve()
 assert not out.exists() and site.name=='site-packages' and site.parent.name=='Lib'
 out.mkdir(parents=True)
-sys.path[:0]=[str(ROOT/'source'),str(ROOT/'validation'),str(ROOT/'tests')]
+sys.path[:0]=[str(ROOT),str(ROOT/'source'),str(ROOT/'validation'),str(ROOT/'tests')]
 sys.path.append(str(site));sys.prefix=str(site.parent.parent)
 sys.executable=str(Path(sys.prefix)/'Scripts/python.exe')
 fixture={'basic':'success','cross_request':'success','timeout':'timeout_key',
@@ -50,6 +50,8 @@ from configured_native_owner import Backend
 from mcp_protocol import Frames,request,require_response,require_tool_set,require_schema_result
 import _winapi
 from wire_boundary import WireBoundary
+from lifecycle_trace import Trace, PHASES
+from owned_cpu import sample_owner
 from mcp_native_guard import NativeCreateGuard
 native_guard=NativeCreateGuard(_winapi,lambda:getattr(spawn_context,'expected',None),
     lambda:getattr(spawn_context,'inherited',None))
@@ -63,6 +65,7 @@ SECRET_TAIL=max(map(len,SECRETS))-1
 
 class Server:
     def __init__(self):
+        self.trace=Trace();self.server_events=[];self.first_stream=set()
         self.backend=Backend();self.job=None;self.child=None
         self.frames=Frames();self.pending=[];self.responses={};self.stderr_bytes=0
         self.stage_lines=[];self.stderr_pending=b''
@@ -71,6 +74,7 @@ class Server:
         RETAINED['fixed-server']=self
     def open(self):
         global spawn_window
+        self.trace.mark('client_open')
         self.job=self.backend.new_job(lambda value:setattr(self,'job',value));self.job.configure()
         assert self.job.policy()=={'kill_on_close':True,'active_process_limit':8}
         inherited=self.job.inherit()
@@ -80,12 +84,15 @@ class Server:
         try:self.child=self.backend.spawn(list(EXPECTED_SERVER),(inherited,),lambda value:setattr(self,'child',value))
         finally:
             spawn_window=False;spawn_context.expected=None;spawn_context.inherited=None
+        self.trace.mark('client_spawned',resumed=self.child.resumed)
         self.job.close_inherited();assert not self.child.resumed
         self.job.assign(self.child);assert self.job.member(self.child)
         self.assigned=True
+        self.trace.mark('client_assigned',assigned=True)
         assert self.job.policy()=={'kill_on_close':True,'active_process_limit':8}
         self.child.resume()
         self.started=True
+        self.trace.mark('client_resumed',resumed=self.child.resumed)
     def send(self,raw):
         if len(raw)>16384 or not raw.endswith(b'\n'):raise ValueError('bounded request required')
         self.child.stdin.write(raw);self.child.stdin.flush()
@@ -99,12 +106,22 @@ class Server:
             for _ in range(4):
                 raw=self.backend.read_available(self.child,label,4096)
                 if not raw:break
+                if label not in self.first_stream:
+                    self.first_stream.add(label);self.trace.mark('client_'+label+'_first')
                 self.boundary.feed(label,raw)
                 if label=='stderr':
                     self.stderr_bytes+=len(raw)
                     self.stderr_pending+=raw
                     while b'\n' in self.stderr_pending:
                         line,self.stderr_pending=self.stderr_pending.split(b'\n',1)
+                        if line.startswith(b'Synthetic trace: '):
+                            event=json.loads(line[len(b'Synthetic trace: '):])
+                            if (type(event) is not dict or set(event)!={'phase','wall_ns','budget_clock_ns','cpu_ns','thread_ns'}
+                                    or event.get('phase') not in PHASES
+                                    or any(type(event[k]) is not int or event[k]<0 for k in ('wall_ns','budget_clock_ns','cpu_ns','thread_ns'))
+                                    or len(self.server_events)>=64):
+                                raise ValueError('Finite server lifecycle required')
+                            self.server_events.append(event)
                         fields=line.decode('ascii',errors='replace').split()
                         if len(fields)==4 and fields[:2]==['Synthetic','stage:'] and fields[2] in {'runtime','owned-directory','guarded-import','tool-binding','ready'}:
                             self.stage_lines.append({'stage':fields[2],'seconds':float(fields[3])})
@@ -130,7 +147,11 @@ class Server:
             time.sleep(.005)
         raise TimeoutError('bounded MCP response wait expired')
     def exchange(self,identifier,method,params=None,**kwargs):
-        self.send(request(method,identifier,params));return self.receive(identifier,**kwargs)
+        if identifier==1 and method=='initialize':self.trace.mark('client_initialize_sent')
+        self.send(request(method,identifier,params))
+        value=self.receive(identifier,**kwargs)
+        if identifier==1 and method=='initialize':self.trace.mark('client_initialize_received')
+        return value
     def diagnostic(self):
         deadline=min(self.deadline,time.monotonic()+2)
         while time.monotonic()<deadline:
@@ -157,6 +178,9 @@ class Server:
     def close(self):
         return close_server(self)
 
+    def sample_cpu(self):
+        return sample_owner(self.child, self.job)
+
 
 
 import mcp_protocol as protocol
@@ -179,12 +203,15 @@ except BaseException as failure:error=error or type(failure).__name__
 checks.update(client_exact_spawn=client_guard['server_spawn_calls']==1 and client_guard['blocked_subprocess']==0,
     client_no_network=client_guard['blocked_socket']==0,client_no_source_read=client_guard['blocked_source']==0,
     exact_assigned_before_resume=server.assigned,no_retained_server=not RETAINED)
+checks['client_diagnostics_healthy'] = not getattr(server,'diagnostic_errors',[]) and server.trace.emit_failures == 0
 startup=checks.pop('startup_seconds',None)
 accepted=error is None and bool(checks) and all(value is True for value in checks.values())
 receipt={'accepted':accepted,'mode':mode,'checks':checks,'error_kind':error,'results':results,
-    'startup_seconds':startup,'stages':server.stage_lines,'failure_frames':failure_frames[-8:],
+    'startup_seconds':startup,'client_lifecycle':server.trace.snapshot(),'server_lifecycle':server.server_events,
+    'server_returncode':None if server.child is None else server.child.returncode,'stages':server.stage_lines,'failure_frames':failure_frames[-8:],
     'stdout_bytes':server.frames.received,'stderr_bytes':server.stderr_bytes,
-    'client_guard':client_guard,'private_start_frame_sent':False,'raw_wire_persisted':False,'cleanup_errors':getattr(server,'cleanup_errors',[])}
+    'client_guard':client_guard,'private_start_frame_sent':False,'raw_wire_persisted':False,'cleanup_errors':getattr(server,'cleanup_errors',[]),
+    'diagnostic_errors':getattr(server,'diagnostic_errors',[])}
 (out/'result.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8')
 print(json.dumps({'mode':mode,'accepted':accepted,'error_kind':error,'startup_seconds':startup,
     'failed_checks':[name for name,passed in checks.items() if passed is not True],

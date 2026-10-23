@@ -13,6 +13,9 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / 'source'
+sys.path.insert(0, str(ROOT))
+from lifecycle_trace import Trace
+TRACE = Trace()
 CASES = frozenset({'success', 'wrong_key', 'missing_wal', 'missing_shm',
                    'invalid_db', 'exception', 'cancel_key', 'timeout_key'})
 SENTINEL = 'SYNTHETIC_PRIVATE_SENTINEL'
@@ -175,7 +178,11 @@ def main():
         import schema_probe
         import readonly_client
 
-        create_fixture(apsw)
+        TRACE.mark('fixture_in')
+        try:
+            create_fixture(apsw)
+        finally:
+            TRACE.mark('fixture_out')
         # The only accepted settings file is generated after the owned start.
         private_settings_target.write_text(
             json.dumps({'enabled': True, 'db_path': str(source)}), encoding='utf-8')
@@ -185,6 +192,7 @@ def main():
             return 123
 
         def candidates(pid):
+            TRACE.mark('key_candidates')
             calls['memory_candidates'] += 1
             if pid != 123:
                 raise ValueError('synthetic discovery token rejected')
@@ -212,6 +220,7 @@ def main():
         original_reader = readonly_client.WorkerConnection
 
         def observed_reader(path, key):
+            TRACE.mark('reader_in')
             live = sum(not getattr(reader, '_released', False) for reader in readers)
             if live:
                 state['reader_serial_confirmed'] = False
@@ -222,11 +231,13 @@ def main():
             try:
                 reader = original_reader(path, key)
             except BaseException as error:
+                TRACE.mark('reader_out')
                 reader = getattr(error, 'worker', None)
                 if reader is not None:
                     readers.append(reader)
                     state['max_live_readers'] = max(state['max_live_readers'], live + 1)
                 raise
+            TRACE.mark('reader_out')
             readers.append(reader)
             state['max_live_readers'] = max(state['max_live_readers'], live + 1)
             return reader
@@ -254,10 +265,13 @@ def main():
     code = 3
     wrapper_error_kind = None
     try:
-        code = configured_child.main()
+        TRACE.mark('provider_main_in')
+        with TRACE.imports():
+            code = configured_child.main()
     except BaseException as error:
         wrapper_error_kind = source_provider._kind(error)
     finally:
+        TRACE.mark('provider_main_out')
         configured_child.read_start = original_read_start
         source_provider.ConfiguredSourceProvider = original_provider
         sys.argv = original_arguments
@@ -279,7 +293,7 @@ def main():
             except BaseException:
                 closed = False
         observation = {
-            'mode': mode,
+            'mode': mode, 'lifecycle': TRACE.snapshot(),
             'injection': 'synthetic_discovery_and_memory_candidates_only',
             'calls': calls, **state,
             'source_bytes_unchanged': stable, 'fixture_writer_closed': closed,

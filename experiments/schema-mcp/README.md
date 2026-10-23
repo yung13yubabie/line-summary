@@ -2,7 +2,7 @@
 
 This experimental Windows entry accepts ordinary MCP JSON-RPC as its first input. One empty-argument `line_schema_counts` tool connects an owned, generated encrypted DB/WAL/SHM fixture to the existing native provider and returns aggregate table/view counts. It supplies synthetic discovery and key candidates; it never opens a real LINE database or process. The four legacy data tools are removed from this entry.
 
-`source/` is an exact copy of the previously reviewed 22-file candidate, not the repository root's product. The four `synthetic_*.py` files and `tests/` are the new development layer. Root product files, dependency locks and workflow are unchanged. See [provenance](PROVENANCE.md), [manifest](MANIFEST.json), and [bounded results](RESULTS.json).
+`source/` is an exact copy of the previously reviewed 22-file candidate, not the repository root's product. The four `synthetic_*.py` files, `lifecycle_trace.py` and `tests/` are the experimental development layer. Root product files, dependency locks and workflow are unchanged. See [provenance](PROVENANCE.md), [manifest](MANIFEST.json), and [initial bounded results](RESULTS.json) and [reliability follow-up](RELIABILITY_RESULTS.json).
 
 ## Reproduce with an already approved runtime
 
@@ -23,6 +23,18 @@ To run the synthetic server from a normal stdio client:
 ```
 
 These trusted local CLI arguments are not MCP tool arguments. No key, settings, DB path, module or arbitrary command can be supplied through the tool. Fixtures and private settings exist only in newly owned session directories. Audit guards deny arbitrary processes, external sockets, private sources outside that session and actual LINE memory entry. The audit hook is a process-scoped test boundary, not an OS sandbox.
+
+## Reliability follow-up
+
+The initial `RESULTS.json` belongs to saved commit `0daf5afe03c1f67657960458882f3f3f0e3e5561`. Current reliability work and preserved failures are separate in `RELIABILITY_RESULTS.json`.
+
+Fixed-phase observations now record startup/import CPU and wall time, EOF delivery, service close, MCP return, main/atexit, and exact child exit/Job-empty state. The client queries CPU totals only from its already retained child and Job handles; it never looks up a PID or opens another process. Diagnostic output contains fixed labels and typed numeric/boolean values. Detailed local clocks and receipts remain under owned output directories; the public report contains finite relative timings.
+
+The observed runtime's deadline clock reports 15.625 ms resolution; diagnostic wall timestamps use its separate performance counter (reported nominal resolution 100 ns). Work and cleanup still use their original clocks and limits. Measurement consumes CPU/wall time, so it is not a zero-impact experiment and does not establish a slowdown cause.
+
+Four bounded author probes produced one initialize timeout while the first MCP SDK import was unfinished, before provider startup; the same idle case also passed. Two cross-request probes returned correct counts and exited about 132-134 ms after EOF. No additional identical root probes were run. The SDK slowdown cause remains unknown, and the historical post-success EOF force was not reproduced.
+
+Independent fake counterexamples found two defects in this new diagnostic layer. An output-sink failure could replace the original import exception, and a CPU-sampling failure could precede a wire failure in cleanup. The added regression cases preserve the primary import/wire errors and record diagnostic failures separately. Diagnostic-only failure before main returns makes an otherwise clean service exit 3. The client also requires a final owned snapshot ending at `server_atexit`, with zero emission failures or dropped events; a missing or unhealthy final snapshot rejects acceptance even if the process exited 0. These are harness fixes, not explanations of the historical startup or EOF failure.
 
 ## Result semantics and limits
 

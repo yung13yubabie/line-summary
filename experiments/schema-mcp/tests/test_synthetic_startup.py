@@ -14,6 +14,19 @@ sys.path.insert(0, str(ROOT))
 
 
 class StartupContract(unittest.TestCase):
+    def test_failed_diagnostics_cannot_exit_zero_with_clean_service(self):
+        module = self.module()
+        service = SimpleNamespace(observation=lambda: {'active_operations': 0,
+            'pending_cleanup': False, 'stopping': True, 'configured': False,
+            'last_os_release_confirmed': True})
+        server = SimpleNamespace(mcp=SimpleNamespace(run=lambda **kwargs: None), _schema_service=service)
+        trace = SimpleNamespace(mark=lambda *args: None, snapshot=lambda: {}, emit_failures=1)
+        with tempfile.TemporaryDirectory(prefix='synthetic-contract-') as directory:
+            with patch.dict(sys.modules, {'configured_launcher': SimpleNamespace(RETAINED={})}), \
+                    patch.object(module, 'TRACE', trace), \
+                    patch.object(module, 'build_server', return_value=(server, SimpleNamespace(stats={}), Path(directory))):
+                self.assertEqual(module.main(self.arguments()), 3)
+
     def module(self):
         return importlib.import_module('synthetic_stdio')
 

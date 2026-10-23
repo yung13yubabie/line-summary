@@ -1,5 +1,11 @@
 """Local synthetic-only stdio entry. The first input is ordinary MCP JSON-RPC."""
+import sys
+import time
+sys.stderr.write('Synthetic trace: {"phase":"server_boot","wall_ns":%d,"budget_clock_ns":%d,"cpu_ns":%d,"thread_ns":%d}\n' %
+                 (time.perf_counter_ns(), time.monotonic_ns(), time.process_time_ns(), time.thread_time_ns()))
+sys.stderr.flush()
 import argparse
+import atexit
 import json
 from pathlib import Path, PureWindowsPath
 import sys
@@ -9,11 +15,15 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent
 STARTED = time.monotonic()
+sys.path.insert(0, str(ROOT))
+from lifecycle_trace import Trace
+TRACE = Trace(lambda row: (sys.stderr.write('Synthetic trace: ' + json.dumps(row) + '\n'), sys.stderr.flush()))
 CASES = frozenset({'success', 'wrong_key', 'missing_wal', 'missing_shm',
                    'invalid_db', 'exception', 'cancel_key', 'timeout_key', 'cancel_then_success'})
 
 
 def stage(name):
+    TRACE.mark(name.replace('-', '_'))
     sys.stderr.write('Synthetic stage: ' + name + ' ' + str(round(time.monotonic() - STARTED, 3)) + '\n')
     sys.stderr.flush()
 
@@ -68,8 +78,10 @@ def build_server(value):
     from synthetic_guard import SyntheticGuard
     guard = SyntheticGuard(ROOT, site, session).install()
     stage('guarded-import')
+    TRACE.mark('launcher_in')
     import configured_launcher as launcher
     import configured_native_owner as native
+    TRACE.mark('launcher_out')
     launch_index = 0
 
     class SyntheticBackend(native.Backend):
@@ -92,7 +104,8 @@ def build_server(value):
                 return super().spawn(argv, inherited, register)
 
     launcher._backend = SyntheticBackend
-    import line_mcp_server as server
+    with TRACE.imports():
+        import line_mcp_server as server
     stage('tool-binding')
     from types import MappingProxyType
     server._policy = MappingProxyType({**server._DEFAULTS, 'enabled': False,
@@ -103,6 +116,18 @@ def build_server(value):
         raise RuntimeError('Synthetic entry has no legacy source capability')
     server.extract_key = server.DbReader = server._find_edb_path = no_legacy
     server.configure_schema(str(session / 'provider_settings.cfg'), str(session / 'artifacts'))
+    original_close = server._schema_service.close
+    async def observed_close():
+        TRACE.mark('service_close_in')
+        try:
+            return await original_close()
+        finally:
+            TRACE.mark('service_close_out')
+    server._schema_service.close = observed_close
+    def exit_observation():
+        TRACE.mark('server_atexit')
+        (session / 'server_lifecycle.json').write_text(json.dumps(TRACE.snapshot()), 'utf-8')
+    atexit.register(exit_observation)
     stage('ready')
     return server, guard, session
 
@@ -113,11 +138,14 @@ def main(argv=None):
     error = None
     try:
         # No read/consume of stdin precedes the actual MCP transport.
+        TRACE.mark('mcp_run_in')
         server.mcp.run(transport='stdio')
     except BaseException as failure:
         error = type(failure).__name__
     finally:
+        TRACE.mark('mcp_run_out')
         observation = {'service': server._schema_service.observation(), 'guard': guard.stats,
+            'diagnostic_emit_failures': TRACE.emit_failures,
             'retained_launchers': len(__import__('configured_launcher').RETAINED),
             'wrapper_error': error, 'synthetic_only': True, 'case': value.case,
             'outer_private_start_frame': False,
@@ -130,7 +158,10 @@ def main(argv=None):
                       or state.get('recovery_release_confirmed') is True))
         observation['terminal_cleanup_confirmed'] = clean
         (session / 'server_observation.json').write_text(json.dumps(observation, indent=2), 'utf-8')
-    return 0 if error is None and clean else 3
+    TRACE.mark('observation_written')
+    TRACE.mark('server_return')
+    (session / 'server_lifecycle.json').write_text(json.dumps(TRACE.snapshot()), 'utf-8')
+    return 0 if error is None and clean and TRACE.emit_failures == 0 else 3
 
 
 if __name__ == '__main__':

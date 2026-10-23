@@ -99,6 +99,25 @@ def make_server(*, running=False, assigned=True, member=True, terminate_error=Fa
 
 
 class ExactCleanup(unittest.TestCase):
+    def test_cpu_diagnostic_failure_alone_cannot_report_acceptance(self):
+        server, registry, _ = make_server()
+        server.trace = SimpleNamespace(mark=lambda *args, **kwargs: None)
+        server.sample_cpu = lambda: (_ for _ in ()).throw(OSError('synthetic CPU failure'))
+        with self.assertRaisesRegex(OSError, '^synthetic CPU failure$'):
+            server.close()
+        self.assert_resources_closed(server, registry)
+        self.assertTrue(server.diagnostic_errors)
+
+    def test_cpu_diagnostic_failure_cannot_replace_wire_failure(self):
+        server, registry, _ = make_server()
+        server.trace = SimpleNamespace(mark=lambda *args, **kwargs: None)
+        server.sample_cpu = lambda: (_ for _ in ()).throw(OSError('synthetic CPU failure'))
+        server.drain = fail('primary wire failure')
+        with self.assertRaisesRegex(ValueError, '^primary wire failure$'):
+            server.close()
+        self.assert_resources_closed(server, registry)
+        self.assertTrue(server.diagnostic_errors)
+
     def assert_resources_closed(self, server, registry):
         self.assertTrue(server.closed)
         self.assertNotIn('fixed-server', registry)

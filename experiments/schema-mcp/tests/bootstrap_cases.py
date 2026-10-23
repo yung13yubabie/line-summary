@@ -123,6 +123,15 @@ def run_case(server, out, mode, protocol, checks=None, results=None):
 def after_close(server, out, mode):
     checks = {'server_no_force': server.forced is False, 'server_exact_closed': server.closed is True,
               'server_exit_zero': server.child is not None and server.child.returncode == 0}
+    finals = list((out / 'artifacts').rglob('server_lifecycle.json'))
+    checks['final_diagnostics_healthy'] = False
+    if len(finals) == 1:
+        final = read_object(finals[0])
+        events = final.get('events') if type(final) is dict else None
+        checks['final_diagnostics_healthy'] = (type(events) is list and 0 < len(events) <= 64
+            and type(events[-1]) is dict and events[-1].get('phase') == 'server_atexit'
+            and type(final.get('emit_failures')) is int and final['emit_failures'] == 0
+            and type(final.get('dropped')) is int and final['dropped'] == 0)
     observations = list((out / 'artifacts').rglob('server_observation.json'))
     checks['one_server_observation'] = len(observations) == 1
     if len(observations) == 1:
@@ -133,6 +142,7 @@ def after_close(server, out, mode):
             service_no_pending=service['active_operations'] == 0 and service['pending_cleanup'] is False,
             no_retained_launcher=value['retained_launchers'] == 0,
             wrapper_no_error=value['wrapper_error'] is None,
+            diagnostic_sink_healthy=value.get('diagnostic_emit_failures') == 0,
             no_native_memory=guard['blocked_native_memory'] == 0,
             no_external_network=guard['blocked_socket'] == 0,
             no_arbitrary_process=guard['blocked_subprocess'] == 0,
