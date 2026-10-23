@@ -18,6 +18,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 from pathlib import Path
 from safety import CursorCodec, page
+from readonly_errors import SnapshotUnavailable
+from readonly_client import WorkerConnection
 
 # -- Cipher config: CONFIRMED via phase0.py against LINE 26.3 ------------------
 _CIPHER_SCHEME = "aes128cbc"
@@ -81,16 +83,8 @@ def _dict_row(cursor: Any, row: tuple) -> dict:
 
 
 def _open_encrypted(db_path: str, key: str) -> Any:
-    """Open a wxSQLite3-encrypted .edb read-only via apsw + SQLite3MultipleCiphers."""
-    import apsw
-    conn = apsw.Connection(db_path, flags=apsw.SQLITE_OPEN_READONLY)
-    conn.execute(f"PRAGMA cipher='{_CIPHER_SCHEME}';")
-    if _KEY_MODE == "hex":
-        conn.execute(f"PRAGMA hexkey='{key}';")
-    else:
-        conn.execute(f"PRAGMA key='{key}';")
-    conn.setrowtrace(_dict_row)
-    return conn
+    """Open a bounded, strictly read-only SQLite WAL worker."""
+    return WorkerConnection(db_path, key)
 
 
 def probe_key(db_path: str, key: str) -> bool:
@@ -98,13 +92,20 @@ def probe_key(db_path: str, key: str) -> bool:
     Called by key_extractor to validate memory candidates. Boolean by contract: a
     failure here means 'this candidate did not decrypt', nothing more. Use
     preflight_db_access() to tell a broken environment from a wrong key."""
+    if not isinstance(db_path, str) or not os.path.exists(db_path):
+        return False
+    conn = None
     try:
         conn = _open_encrypted(db_path, key)
         next(conn.execute("SELECT count(*) FROM sqlite_master;"))
-        conn.close()
         return True
+    except SnapshotUnavailable:
+        raise
     except Exception:
         return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 class DbAccessError(Exception):
@@ -117,7 +118,7 @@ class DbAccessError(Exception):
 # just wrong. Anything else on a preflight is an environment problem.
 _WRONG_KEY_SIGNALS = ("not a database", "hmac", "file is encrypted", "encrypted")
 _LOCK_SIGNALS = ("locked", "busy")
-_ACCESS_SIGNALS = ("permission", "access is denied", "cannot open", "unable to open")
+_ACCESS_SIGNALS = ("permission", "access is denied", "cannot open", "unable to open", "source shm")
 
 
 def preflight_db_access(db_path: str) -> None:
@@ -128,9 +129,9 @@ def preflight_db_access(db_path: str) -> None:
     DbAccessError with a specific reason for genuine environment problems, so a
     permission/lock/cipher failure is not swallowed into 'none of the keys worked'."""
     if not os.path.exists(db_path):
-        raise DbAccessError(f"file not found: {db_path}")
+        raise DbAccessError("file not found; check the configured database path locally") from None
     if not os.access(db_path, os.R_OK):
-        raise DbAccessError(f"no read permission: {db_path}")
+        raise DbAccessError("no read permission; check database access locally") from None
     try:
         conn = _open_encrypted(db_path, "0" * 32)  # deliberately wrong key
         try:
@@ -142,10 +143,10 @@ def preflight_db_access(db_path: str) -> None:
         if any(s in msg for s in _WRONG_KEY_SIGNALS):
             return  # normal: encrypted DB, wrong key -> engine healthy
         if any(s in msg for s in _LOCK_SIGNALS):
-            raise DbAccessError(f"database is locked: {e}") from e
+            raise DbAccessError("database is locked; stop and check the local file state") from None
         if any(s in msg for s in _ACCESS_SIGNALS):
-            raise DbAccessError(f"cannot open the DB file (permission/handle): {e}") from e
-        raise DbAccessError(f"unexpected DB access error: {e}") from e
+            raise DbAccessError("cannot open the DB file (permission/handle); check access locally") from None
+        raise DbAccessError("unexpected DB access error; cipher and file state are unverified") from None
     # A dummy key that actually decrypts is implausible, but if so the DB is fine.
     return
 
@@ -228,6 +229,8 @@ class DbReader:
         def safe(sql: str) -> list:
             try:
                 return list(conn.execute(sql))
+            except SnapshotUnavailable:
+                raise
             except Exception:
                 return []
         groups = {r["_chatMid"]: r["_chatName"]
@@ -265,6 +268,8 @@ class DbReader:
         def safe(sql: str) -> list:
             try:
                 return list(conn.execute(sql))
+            except SnapshotUnavailable:
+                raise
             except Exception:
                 return []
         m = {r["_mid"]: (r["_displayNameOverridden"] or r["_displayName"])
@@ -367,6 +372,8 @@ class DbReader:
         def safe(sql: str) -> list:
             try:
                 return list(conn.execute(sql))
+            except SnapshotUnavailable:
+                raise
             except Exception:
                 return []
         out: set[str] = set()

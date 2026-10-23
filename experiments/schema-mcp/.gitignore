@@ -1,0 +1,7 @@
+evidence/
+__pycache__/
+*.pyc
+*.edb*
+synthetic_runtime.json
+runtime_contract.json
+session_*/

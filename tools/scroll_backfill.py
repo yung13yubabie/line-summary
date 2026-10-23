@@ -95,11 +95,20 @@ def main():
     if not key:
         print("Key extraction failed."); sys.exit(1)
     conn = _open_encrypted(db, key)
-
-    chat_id = resolve_chat_id(conn, args.chat_name)
+    try:
+        chat_id = resolve_chat_id(conn, args.chat_name)
+    finally:
+        conn.close()
     if not chat_id:
         print(f"Chat {args.chat_name!r} not found in local _squareChat/_groupChat tables.")
         sys.exit(1)
+
+    def current_stats():
+        current = _open_encrypted(db, key)
+        try:
+            return chat_stats(current, chat_id)
+        finally:
+            current.close()
 
     win = find_line_window()
     hwnd = win.NativeWindowHandle
@@ -110,7 +119,7 @@ def main():
     target_y = rect.top + int((rect.bottom - rect.top) * 0.55)
 
     print(f"Target chat_id={chat_id}")
-    count, earliest = chat_stats(conn, chat_id)
+    count, earliest = current_stats()
     print(f"START  count={count}  earliest={_ts_to_iso(earliest)}")
     print(f"Scroll target point: ({target_x},{target_y}) inside LINE window {rect}")
     print("\n>>> Moving your real mouse cursor now. Do not touch mouse/keyboard. <<<\n")
@@ -124,7 +133,7 @@ def main():
         round_no += 1
         scroll_up_real(target_x, target_y, args.ticks_per_round)
         time.sleep(1.2)  # let LINE fetch/render before re-checking
-        new_count, new_earliest = chat_stats(conn, chat_id)
+        new_count, new_earliest = current_stats()
         moved = new_earliest is not None and earliest is not None and new_earliest < earliest
         print(f"round {round_no:>3}  count={new_count:>5}  earliest={_ts_to_iso(new_earliest)}"
               f"  {'(older reached)' if moved else ''}")
@@ -134,7 +143,6 @@ def main():
             stall = 0
         count, earliest = new_count, new_earliest
 
-    conn.close()
     print(f"\nSTOPPED after {round_no} rounds "
           f"({'stalled '+str(args.stall_limit)+'x' if stall >= args.stall_limit else 'max-rounds hit'}).")
     print(f"FINAL  count={count}  earliest={_ts_to_iso(earliest)}")

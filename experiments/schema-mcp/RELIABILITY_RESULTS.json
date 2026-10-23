@@ -1,0 +1,600 @@
+{
+  "format": 1,
+  "scope": "bounded synthetic startup and EOF diagnostic follow-up",
+  "overall": "OPEN_STABILITY_GATES_WITH_CONFIRMED_HARNESS_FIXES",
+  "followup_of_commit": "0daf5afe03c1f67657960458882f3f3f0e3e5561",
+  "product_fix_claimed": false,
+  "source22_unchanged": true,
+  "guard_gate_validation_and_deadlines_unchanged": true,
+  "commands": {
+    "pure": "$PythonBase -I -S -B -m unittest discover -s tests -p 'test_*.py'",
+    "native_template": "$PythonBase -I -S -B tests/stdio_client.py $FreshOwnedOutput $Mode $ApprovedSite",
+    "native_modes_after_fix": [
+      "wrong_key",
+      "timeout",
+      "cancel",
+      "eof_active"
+    ],
+    "requirements": "Use the already approved Windows runtime in README; serial native cases, each with a new owned output directory. No installation."
+  },
+  "final_pure_tests": {
+    "passed": 47,
+    "failed": 0,
+    "duration_seconds": 1.235,
+    "test_file_sha256": {
+      "lifecycle_trace.py": "ede00c1337c7e1fa2f044cf08efa753a3ec604687f874f34faf5e9e9fa3c628f",
+      "preview.py": "31672640350d392cd8344cf3cb80f7b3307f4a04b50e022357d20051a0c4f1dc",
+      "preview_guard.py": "4e34b001321519655a4c58900b70e1cc950f8a0f7189edb3bd4ac7453b48636e",
+      "source/child.py": "45394398427c2d28f19884c60512bbcf3f28531d55fc2032431f1a4d633c9cb8",
+      "source/configured_child.py": "b52a6febfb8bee934bac2c6bbcb549491147796cd12b7d65b32c44be53bfa7e9",
+      "source/configured_entry_gate.py": "81282a960f5b5f66946df2f3147f1d6e44a63e2e2fd4a799cb22c415a6278915",
+      "source/configured_launcher.py": "f24f86e455ac7dc77bce15d75d5a63f17fad449018026e40962da6f2baefb20d",
+      "source/configured_native_owner.py": "d8d04ca4bf312d7f7dae2235c7581e1842ca8a34790bcd7dfc263aaf56775f32",
+      "source/configured_suspended.py": "f8e937d29078a136e55366114b640834acf5bb322f7a2e07d88d2a31adb632d7",
+      "source/db_reader.py": "6da91ffcae81c0d2647a11968121c4570714ab6db7bc90878dde15d17a71c2d6",
+      "source/extraction_budget.py": "0aa8dac777e8e854105fffbad53d99455e97115e0e9f2fad5994d54ced9f0518",
+      "source/key_extractor.py": "3db27b634c51e8d5d6329f3705b9c3f8b28bf2f8aef068f93ae68f7574d0eb20",
+      "source/line_mcp_server.py": "96ad43ab14a3fd9f5f9e0ae6eb9c4139e7d0cef1405c604a30b88e4fef3b456a",
+      "source/line_process_identity.py": "65667686cd8bdf3e25d645505e24f458d760001cd108c3e29a09716a7bb1c224",
+      "source/readonly_client.py": "e18bca4a5728d4fb7573fca165f467ccbff85c113f445dc680cbd53fc9a3febe",
+      "source/readonly_errors.py": "be700a7056b7ae7ce9986aa230da1ec8a4fc84babd1bb15cc0a16cea7cfab474",
+      "source/readonly_guard.py": "7b2b705578bfb69e18353a4d4d39087188311051cab97d1ac494b26a66b80659",
+      "source/readonly_worker.py": "32d31fab92be3f1ff20cd1b25d2b7d55ee6b9424900e296fac60dea564b970e1",
+      "source/runner.py": "9599a7439bfbc62175834f44eefde531e732fd175f1074a86e56872102cbc725",
+      "source/safety.py": "aa7f894e4fdb12769289605e5408d8983b014285499c65de3783598fcae4d3ab",
+      "source/schema_child.py": "5682aec0ed3a5a6f35431fa4056fd599ca551424b8e8864eda866cc094fd8394",
+      "source/schema_entry.py": "2ffa0e006cfdde2f71e10df88b9be7f01cc2de7a8ad8b7597c99acc292c0debb",
+      "source/schema_mcp_adapter.py": "5a4c543dc577e280c253c077d35ccb86db0e5ab24ba6233756d43028b5508214",
+      "source/schema_probe.py": "a725b9217739b210c4e9fb3dab6569bff3c02003899bd6a8e514b672e606d9a7",
+      "source/source_provider.py": "b168c47262a12cedc12a8d05553eedb3060723705f8732872a179365af9ebca0",
+      "synthetic_gate.py": "84a4c1d4d0d09b3246fcf1b6c008faaaaa7da97c79fa5c2f74389df58859c00b",
+      "synthetic_guard.py": "045e846e8b5c96a969a2d2904b1b20c8f1f76e8a5af10406a6889d0c10f5637b",
+      "synthetic_stdio.py": "00d4a1f774c68628d64ff553049d9416af6de4140f5936a7d2be15bd53b7bd07",
+      "synthetic_worker.py": "516c6b46a005306c0604aa748ef847f7fedc0bd1639f630be5e571177e9e43c2",
+      "tests/bootstrap_cases.py": "18ff4ce9a4a6e848fb68a37ff5e481bbf81fa03fc6f157b1a00865501c7dd096",
+      "tests/guard_probe.py": "19bb7bb5f0154e2201b6d1f185b5605c42629d4fb92cc394428c52f805efb697",
+      "tests/owned_cpu.py": "04d9da02e09e127ce20cfcdd489cbb9363c7f0adea33bc027b7e3651430d1e75",
+      "tests/server_cleanup.py": "fc3c71433e38c1e2ce0918238b6da6c777cf06795a6f978fddcedf154fece40f",
+      "tests/stdio_client.py": "345f57f9cd09a7e478cc50d95d6fa0a8e410b6bde9a2d9ec443ca3344c0c79a8",
+      "tests/test_lifecycle_trace.py": "0d91b6ba959a992fd9d92941507a27cfcf95cdfb1e9f4a664b65ad0338063767",
+      "tests/test_owned_cpu.py": "32e55919ea7aaf0b4bb2d831173a669e0897f714330722e8ddd960fd889ba3a7",
+      "tests/test_server_cleanup.py": "db386cce643846c4fb2d5d29a6e7ce2618a8cd147e69c6f83ba36cb17f101af8",
+      "tests/test_synthetic_guard.py": "2a2a67fe34b535a8143a30951f756609b10063a1f515c21b1cc2b3f406ce1a0a",
+      "tests/test_synthetic_startup.py": "881a9968b0f1f85163279b555766668c5e9cfb84ad81106de136bdee6ae87f1e",
+      "tests/test_synthetic_worker_boundaries.py": "1865e3fe583cfe1677fae8263a4c9e641de2f026b88bfde018fb18f3800143ba",
+      "tests/test_wire_boundary.py": "35abcc43e80d2198d2cb5f5766118feb448db1f123f9f78d794a32f1a5d60d0a",
+      "tests/wire_boundary.py": "fc96543a3798470847907005fdf408faad09f303b0aaf415c2fae2455c2a7373",
+      "validation/fixture_launch_policy.py": "32a7c81bc1cd71276b61e063da112b846eb23ad2b9697b5d0db5f4d391978ffd",
+      "validation/mcp_native_guard.py": "5abe87e221a2e8fe2d105477412815679356dc343587ca1acecd3c26b05547d8",
+      "validation/mcp_protocol.py": "fffe2986a7921e32bb6d8d83ee9a2393bd3687c188fa46b728e3415d09205016",
+      "validation/timeout_receipt.py": "65f84ab985f08b14806c2d8b183d45136f061d8e0db21890bfffb75709fc330a"
+    },
+    "late_snapshot_regression": "One method checks five missing/late-failure/nonterminal/dropped/healthy final snapshots."
+  },
+  "author_probes": {
+    "cases": 4,
+    "passed": 3,
+    "failed": 1,
+    "records": [
+      {
+        "case": "cross_request",
+        "accepted": true,
+        "error_kind": null,
+        "returncode": 0,
+        "initialize_seconds": 4.828,
+        "last_server_phase": "server_atexit",
+        "eof_delivery_ms": 0.042,
+        "eof_to_process_exit_ms": 133.898,
+        "imports": {
+          "server_mcp": {
+            "wall_ms": 4015.315,
+            "cpu_ms": 2796.875
+          },
+          "server_fastmcp": {
+            "wall_ms": 0.039,
+            "cpu_ms": 0.0
+          },
+          "server_db": {
+            "wall_ms": 162.52,
+            "cpu_ms": 78.125
+          },
+          "server_key": {
+            "wall_ms": 27.168,
+            "cpu_ms": 15.625
+          },
+          "server_adapter": {
+            "wall_ms": 8.636,
+            "cpu_ms": 15.625
+          }
+        },
+        "service_close_ms": 0.058,
+        "mcp_return_after_eof_ms": 1.988,
+        "atexit_after_eof_ms": 11.696,
+        "native_ownership": {
+          "assigned_before_resume": true,
+          "closed": true,
+          "force_attempted": false
+        },
+        "receipt_sha256": "6fa061f7716875ed562980d1831573a0f6f236ee5340fae1247517f130bb976b"
+      },
+      {
+        "case": "eof_idle",
+        "accepted": false,
+        "error_kind": "TimeoutError",
+        "returncode": 125,
+        "initialize_seconds": null,
+        "last_server_phase": "server_mcp_in",
+        "eof_delivery_ms": 0.244,
+        "eof_to_process_exit_ms": 3070.932,
+        "imports": {},
+        "service_close_ms": null,
+        "mcp_return_after_eof_ms": null,
+        "atexit_after_eof_ms": null,
+        "native_ownership": {
+          "assigned_before_resume": true,
+          "closed": true,
+          "force_attempted": true
+        },
+        "receipt_sha256": "52e700e0d6cb76df4b9cad2f51a0d5fc782aae5e26efb2369055e3d6b316178f",
+        "force_sample": {
+          "after_eof_ms": 3059.691,
+          "exited": false,
+          "job_empty": false,
+          "active_processes": 2
+        },
+        "provider_started": false,
+        "sdk_import_enter_after_client_open_ms": 1622.319,
+        "cpu_during_unfinished_sdk_import": "NOT_CAPTURED_IN_FIRST_PROBE"
+      },
+      {
+        "case": "cross_request",
+        "accepted": true,
+        "error_kind": null,
+        "returncode": 0,
+        "initialize_seconds": 2.094,
+        "last_server_phase": "server_atexit",
+        "eof_delivery_ms": 0.035,
+        "eof_to_process_exit_ms": 132.391,
+        "imports": {
+          "server_mcp": {
+            "wall_ms": 1672.256,
+            "cpu_ms": 1375.0
+          },
+          "server_fastmcp": {
+            "wall_ms": 0.027,
+            "cpu_ms": 0.0
+          },
+          "server_db": {
+            "wall_ms": 34.188,
+            "cpu_ms": 31.25
+          },
+          "server_key": {
+            "wall_ms": 14.588,
+            "cpu_ms": 0.0
+          },
+          "server_adapter": {
+            "wall_ms": 4.335,
+            "cpu_ms": 15.625
+          }
+        },
+        "service_close_ms": 0.045,
+        "mcp_return_after_eof_ms": 1.54,
+        "atexit_after_eof_ms": 12.717,
+        "native_ownership": {
+          "assigned_before_resume": true,
+          "closed": true,
+          "force_attempted": false
+        },
+        "receipt_sha256": "df230978b404d9b319c23fc2c1f291d616b4ba5a0b97fb1d2595ae9e53d64328"
+      },
+      {
+        "case": "eof_idle",
+        "accepted": true,
+        "error_kind": null,
+        "returncode": 0,
+        "initialize_seconds": 2.14,
+        "last_server_phase": "server_atexit",
+        "eof_delivery_ms": 0.077,
+        "eof_to_process_exit_ms": 117.078,
+        "imports": {
+          "server_mcp": {
+            "wall_ms": 1739.936,
+            "cpu_ms": 1500.0
+          },
+          "server_fastmcp": {
+            "wall_ms": 0.032,
+            "cpu_ms": 0.0
+          },
+          "server_db": {
+            "wall_ms": 36.891,
+            "cpu_ms": 31.25
+          },
+          "server_key": {
+            "wall_ms": 12.915,
+            "cpu_ms": 15.625
+          },
+          "server_adapter": {
+            "wall_ms": 4.445,
+            "cpu_ms": 0.0
+          }
+        },
+        "service_close_ms": 0.049,
+        "mcp_return_after_eof_ms": 1.645,
+        "atexit_after_eof_ms": 4.761,
+        "native_ownership": {
+          "assigned_before_resume": true,
+          "closed": true,
+          "force_attempted": false
+        },
+        "receipt_sha256": "512da79b25edf894f7d4dd14e5541e1c06237a29692bb7e9b77f0275169cdbd0"
+      }
+    ],
+    "limits": [
+      "The first failed idle probe preceded the retained-handle CPU sampler; CPU during its unfinished import was not captured.",
+      "Later CPU instrumentation changes cleanup observations only; do not treat every probe as a byte-identical campaign.",
+      "The forced failed-startup cleanup proved a still-live exact child and nonempty Job, then confirmed release; it was not accepted."
+    ]
+  },
+  "independent_before_fix": {
+    "pure_passed": 42,
+    "native_passed": 4,
+    "purpose": "Earlier diagnostic version; not the final fixed-version campaign. Counts overlap and are not added.",
+    "freeze_sha256": "7a48bbfcccb29af7f82987183647b433055fc1633a72af0d79a933c189db8000"
+  },
+  "independent_after_fix": {
+    "pure_passed": 46,
+    "native_passed": 4,
+    "native_failed": 0,
+    "native_retries": 0,
+    "outer_forced_termination": 0,
+    "operations": 4,
+    "readers": 5,
+    "freeze_sha256": "499a578c564591cbd888f6de6ffb443e5cb2c732e8d646f5cd9be221bfb247c4",
+    "report_sha256": "33032b895a846d2f1b59046a49f82dc79b02a58275369e5d0385a7e69cae237f",
+    "cases": [
+      {
+        "mode": "wrong_key",
+        "accepted": true,
+        "initialize_seconds": 6.5,
+        "eof_sent_to_exit_ms": 200.878,
+        "results": [
+          {
+            "status": "cleanup_unconfirmed",
+            "successful": false,
+            "application_ack": false,
+            "os_release_confirmed": true,
+            "retry_required": false
+          }
+        ],
+        "operations": [
+          {
+            "fixture_mode": "wrong_key",
+            "launcher_status": "cleanup_unconfirmed",
+            "completion_status": "cleanup_unconfirmed",
+            "completion_primary_status": "failed",
+            "completion_deadline_kind": null,
+            "completion_timeout_stage": null,
+            "reader_count": 2,
+            "max_live_readers": 1,
+            "inner_forced_termination": false,
+            "checks": {
+              "fixed_run_ids": true,
+              "committed_completion_bound": true,
+              "launcher_physically_released": true,
+              "launcher_retry_not_required": true,
+              "launcher_owned_start_and_unforced": true,
+              "inner_native_release_proofs": true,
+              "inner_not_forced": true,
+              "fixture_source_unchanged": true,
+              "fixture_writer_closed": true,
+              "readers_have_actual_proof": true,
+              "serial_readers": true,
+              "normal_key_loader": true,
+              "no_true_line_memory": true,
+              "fixed_after_owned_start": true,
+              "failure_never_contains_counts": true,
+              "failure_never_writes_schema_success": true
+            }
+          }
+        ],
+        "checks": {
+          "client_accepted": true,
+          "client_error_absent": true,
+          "client_checks_finite_true": true,
+          "first_frame_initialize": true,
+          "no_outer_private_frame": true,
+          "raw_wire_not_persisted": true,
+          "client_cleanup_error_absent": true,
+          "actual_operation_count": true,
+          "actual_fixture_count": true,
+          "distinct_launcher_ids": true,
+          "distinct_configured_ids": true,
+          "all_operation_checks_true": true,
+          "finite_bounded_client_trace": true,
+          "finite_bounded_server_trace": true,
+          "normal_outer_exit_observed": true,
+          "no_outer_force_event": true,
+          "service_and_runtime_tail_observed": true,
+          "no_public_counts_in_failure": true,
+          "client_diagnostic_errors_empty": true,
+          "client_emit_failures_zero": true,
+          "server_emit_failures_zero_at_return": true,
+          "server_emit_failures_zero_after_atexit": true
+        },
+        "diagnostic_errors": [],
+        "client_emit_failures": 0,
+        "server_final_emit_failures": 0,
+        "receipt_sha256": "3fd898287c6a0ab1ddfeacedcbb8a51c83c6208404255ebccdc84e2ad6dfccf6"
+      },
+      {
+        "mode": "timeout",
+        "accepted": true,
+        "initialize_seconds": 4.141,
+        "eof_sent_to_exit_ms": 195.541,
+        "results": [
+          {
+            "status": "cleanup_unconfirmed",
+            "successful": false,
+            "application_ack": false,
+            "os_release_confirmed": true,
+            "retry_required": false
+          }
+        ],
+        "operations": [
+          {
+            "fixture_mode": "timeout_key",
+            "launcher_status": "cleanup_unconfirmed",
+            "completion_status": "cleanup_unconfirmed",
+            "completion_primary_status": "deadline_exceeded",
+            "completion_deadline_kind": "stage",
+            "completion_timeout_stage": "source_prepare",
+            "reader_count": 1,
+            "max_live_readers": 1,
+            "inner_forced_termination": false,
+            "checks": {
+              "fixed_run_ids": true,
+              "committed_completion_bound": true,
+              "launcher_physically_released": true,
+              "launcher_retry_not_required": true,
+              "launcher_owned_start_and_unforced": true,
+              "inner_native_release_proofs": true,
+              "inner_not_forced": true,
+              "fixture_source_unchanged": true,
+              "fixture_writer_closed": true,
+              "readers_have_actual_proof": true,
+              "serial_readers": true,
+              "normal_key_loader": true,
+              "no_true_line_memory": true,
+              "fixed_after_owned_start": true,
+              "failure_never_contains_counts": true,
+              "failure_never_writes_schema_success": true,
+              "stage25_timeout_committed_proof": true
+            }
+          }
+        ],
+        "checks": {
+          "client_accepted": true,
+          "client_error_absent": true,
+          "client_checks_finite_true": true,
+          "first_frame_initialize": true,
+          "no_outer_private_frame": true,
+          "raw_wire_not_persisted": true,
+          "client_cleanup_error_absent": true,
+          "actual_operation_count": true,
+          "actual_fixture_count": true,
+          "distinct_launcher_ids": true,
+          "distinct_configured_ids": true,
+          "all_operation_checks_true": true,
+          "finite_bounded_client_trace": true,
+          "finite_bounded_server_trace": true,
+          "normal_outer_exit_observed": true,
+          "no_outer_force_event": true,
+          "service_and_runtime_tail_observed": true,
+          "no_public_counts_in_failure": true,
+          "client_diagnostic_errors_empty": true,
+          "client_emit_failures_zero": true,
+          "server_emit_failures_zero_at_return": true,
+          "server_emit_failures_zero_after_atexit": true
+        },
+        "diagnostic_errors": [],
+        "client_emit_failures": 0,
+        "server_final_emit_failures": 0,
+        "receipt_sha256": "3390f12ddf7955bf6c36025a63853418c26b4c3659083fa278de50942f608dcc"
+      },
+      {
+        "mode": "cancel",
+        "accepted": true,
+        "initialize_seconds": 3.86,
+        "eof_sent_to_exit_ms": 449.406,
+        "results": [],
+        "operations": [
+          {
+            "fixture_mode": "cancel_key",
+            "launcher_status": "cancelled",
+            "completion_status": "cleanup_unconfirmed",
+            "completion_primary_status": "cancelled",
+            "completion_deadline_kind": null,
+            "completion_timeout_stage": null,
+            "reader_count": 1,
+            "max_live_readers": 1,
+            "inner_forced_termination": false,
+            "checks": {
+              "fixed_run_ids": true,
+              "committed_completion_bound": true,
+              "launcher_physically_released": true,
+              "launcher_retry_not_required": true,
+              "launcher_owned_start_and_unforced": true,
+              "inner_native_release_proofs": true,
+              "inner_not_forced": true,
+              "fixture_source_unchanged": true,
+              "fixture_writer_closed": true,
+              "readers_have_actual_proof": true,
+              "serial_readers": true,
+              "normal_key_loader": true,
+              "no_true_line_memory": true,
+              "fixed_after_owned_start": true,
+              "failure_never_contains_counts": true,
+              "failure_never_writes_schema_success": true
+            }
+          }
+        ],
+        "checks": {
+          "client_accepted": true,
+          "client_error_absent": true,
+          "client_checks_finite_true": true,
+          "first_frame_initialize": true,
+          "no_outer_private_frame": true,
+          "raw_wire_not_persisted": true,
+          "client_cleanup_error_absent": true,
+          "actual_operation_count": true,
+          "actual_fixture_count": true,
+          "distinct_launcher_ids": true,
+          "distinct_configured_ids": true,
+          "all_operation_checks_true": true,
+          "finite_bounded_client_trace": true,
+          "finite_bounded_server_trace": true,
+          "normal_outer_exit_observed": true,
+          "no_outer_force_event": true,
+          "service_and_runtime_tail_observed": true,
+          "no_public_counts_in_failure": true,
+          "client_diagnostic_errors_empty": true,
+          "client_emit_failures_zero": true,
+          "server_emit_failures_zero_at_return": true,
+          "server_emit_failures_zero_after_atexit": true
+        },
+        "diagnostic_errors": [],
+        "client_emit_failures": 0,
+        "server_final_emit_failures": 0,
+        "receipt_sha256": "bfcd1432ea25a7d117893560880c9713333589753f7798ab494035bf2afaa975"
+      },
+      {
+        "mode": "eof_active",
+        "accepted": true,
+        "initialize_seconds": 5.703,
+        "eof_sent_to_exit_ms": 795.7,
+        "results": [],
+        "operations": [
+          {
+            "fixture_mode": "cancel_key",
+            "launcher_status": "cancelled",
+            "completion_status": "cleanup_unconfirmed",
+            "completion_primary_status": "cancelled",
+            "completion_deadline_kind": null,
+            "completion_timeout_stage": null,
+            "reader_count": 1,
+            "max_live_readers": 1,
+            "inner_forced_termination": false,
+            "checks": {
+              "fixed_run_ids": true,
+              "committed_completion_bound": true,
+              "launcher_physically_released": true,
+              "launcher_retry_not_required": true,
+              "launcher_owned_start_and_unforced": true,
+              "inner_native_release_proofs": true,
+              "inner_not_forced": true,
+              "fixture_source_unchanged": true,
+              "fixture_writer_closed": true,
+              "readers_have_actual_proof": true,
+              "serial_readers": true,
+              "normal_key_loader": true,
+              "no_true_line_memory": true,
+              "fixed_after_owned_start": true,
+              "failure_never_contains_counts": true,
+              "failure_never_writes_schema_success": true
+            }
+          }
+        ],
+        "checks": {
+          "client_accepted": true,
+          "client_error_absent": true,
+          "client_checks_finite_true": true,
+          "first_frame_initialize": true,
+          "no_outer_private_frame": true,
+          "raw_wire_not_persisted": true,
+          "client_cleanup_error_absent": true,
+          "actual_operation_count": true,
+          "actual_fixture_count": true,
+          "distinct_launcher_ids": true,
+          "distinct_configured_ids": true,
+          "all_operation_checks_true": true,
+          "finite_bounded_client_trace": true,
+          "finite_bounded_server_trace": true,
+          "normal_outer_exit_observed": true,
+          "no_outer_force_event": true,
+          "service_and_runtime_tail_observed": true,
+          "no_public_counts_in_failure": true,
+          "client_diagnostic_errors_empty": true,
+          "client_emit_failures_zero": true,
+          "server_emit_failures_zero_at_return": true,
+          "server_emit_failures_zero_after_atexit": true
+        },
+        "diagnostic_errors": [],
+        "client_emit_failures": 0,
+        "server_final_emit_failures": 0,
+        "receipt_sha256": "42033b5d8bd869b652740e3e1c1b37449078ae357be639d41774b59c706a96dc"
+      }
+    ],
+    "final_test_only_delta": [
+      "tests/bootstrap_cases.py",
+      "tests/test_lifecycle_trace.py"
+    ],
+    "delta_scope": "Final post-exit snapshot assertion and its pure regression only; server/client/native implementation unchanged.",
+    "final_snapshot_revalidation": {
+      "accepted": true,
+      "pure_passed": 47,
+      "existing_native_cases_revalidated": 4,
+      "native_runs_added": 0,
+      "report_sha256": "a0ac8feb90e8e920d0f1ca40bee75dae6858e164f0073b5477cf91febf8ff8ed",
+      "scope": "Pure final assertion applied to existing r2 native outputs; not new native execution."
+    }
+  },
+  "confirmed_harness_fixes": [
+    {
+      "defect": "Diagnostic stderr emission replaced a primary import exception.",
+      "regression": "Original ValueError identity and import binding retained when the sink raises BrokenPipeError; emit failure recorded."
+    },
+    {
+      "defect": "CPU sampling error preceded and masked the primary wire cleanup error.",
+      "regression": "Original wire ValueError identity wins; retained-handle diagnostic OSError stays separate. Diagnostic-only failure still rejects acceptance after exact resource release."
+    },
+    {
+      "acceptance_gap": "A main return code cannot attest to a later atexit diagnostic emission.",
+      "regression": "Post-exit client assertion requires one terminal healthy atexit snapshot; missing/failed/nonterminal/dropped snapshots cannot pass."
+    }
+  ],
+  "counterexample_red_sha256": "7ad75209c2aa11f74b1ab7a25a0490a41f3258a0dd23f69d7d01b6306c446ce9",
+  "counterexample_green_sha256": "98954bb39e0a6a86da85623ab5e57bc0477c123b26caa077c75ecc0f402fd897",
+  "clock_observation": {
+    "deadline_clock_resolution_ms": 15.625,
+    "diagnostic_wall_clock_nominal_resolution_ns": 100,
+    "original_deadlines_unchanged": true,
+    "instrumentation_has_cpu_and_wall_cost": true
+  },
+  "open_findings": [
+    {
+      "gate": "cold_start",
+      "status": "INTERMITTENT_FAILURE_REPRODUCED_CAUSE_UNKNOWN",
+      "evidence": "One idle initialize exceeded unchanged 10-second limit while the first MCP SDK import was unfinished, before provider startup. Same idle case later passed. No internal stack or failure-time CPU cause captured."
+    },
+    {
+      "gate": "historical_post_success_eof_force",
+      "status": "NOT_REPRODUCED_IN_TWO_BOUNDED_CROSS_REQUEST_PROBES",
+      "evidence": "Both successful two-request probes exited normally 132-134 ms after EOF. These passes do not explain the historical forced cleanup."
+    }
+  ],
+  "not_run": [
+    "actual desktop-host MCP registration/inventory/approval/tool call/shutdown",
+    "ChatGPT web or mobile connection",
+    "real LINE or real keys",
+    "deployment",
+    "new full repository suite or hosted CI for this follow-up"
+  ],
+  "limits": [
+    "Only synthetic owned encrypted DB/WAL/SHM fixtures were used. No new credential, trust/global setting, tunnel or persistent access.",
+    "No root product file or source22 byte changed. New diagnostics and fixes belong to the experimental harness.",
+    "Finite Exception regression cases do not prove transparency for every BaseException, resource failure or timing interleaving.",
+    "Initialize remains 10 seconds; work/stage/inner cleanup remain 30/25/3 seconds and client cooperative EOF remains 3.05 seconds.",
+    "Measurements are fixed labels and numeric/boolean facts; public records omit local paths, IDs, raw clocks and raw transport.",
+    "Initial RESULTS.json remains historical at the predecessor commit. Do not sum overlapping campaigns or relabel later pure replay as new native execution."
+  ]
+}

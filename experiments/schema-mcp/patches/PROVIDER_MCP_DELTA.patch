@@ -1,0 +1,2148 @@
+diff --git a/configured_child.py b/configured_child.py
+new file mode 100644
+--- /dev/null
++++ b/configured_child.py
+@@ -0,0 +1,132 @@
++"""Fixed configured-source schema worker. Private input arrives only on its start pipe."""
++import argparse,json,os,re,sys,threading,time,hashlib
++from pathlib import Path,PureWindowsPath
++
++def explicit_local_file(value,suffix=None):
++    """Pure lexical policy shared by start ingress and the configured provider."""
++    if (type(value) is not str or not value or len(value)>2048
++            or any(ord(char)<32 for char in value)):
++        return False
++    path=PureWindowsPath(value)
++    if (not path.is_absolute() or re.fullmatch(r'[a-zA-Z]:',path.drive) is None
++            or '..' in path.parts or any(':' in part or part.endswith((' ','.'))
++                or any(char in part for char in '<>"|?*')
++                or PureWindowsPath(part).is_reserved() for part in path.parts[1:])):
++        return False
++    return suffix is None or path.suffix.casefold()==suffix
++
++def _unique_fields(pairs):
++    value={}
++    for key,item in pairs:
++        if key in value:raise ValueError('duplicate configured start field')
++        value[key]=item
++    return value
++
++def read_start(stream):
++    raw=stream.readline(4097)
++    if not raw or len(raw)>4096 or not raw.endswith(b'\n'):
++        raise ValueError('bounded configured start required')
++    try:value=json.loads(raw,object_pairs_hook=_unique_fields)
++    except (ValueError,UnicodeError):raise ValueError('configured start rejected') from None
++    if (not isinstance(value,dict) or set(value)!={'op','settings_path'} or value['op']!='start'
++            or type(value['settings_path']) is not str):
++        raise ValueError('configured start rejected')
++    path=value['settings_path']
++    if not explicit_local_file(path):
++        raise ValueError('configured start rejected')
++    return path
++
++def main():
++    parser=argparse.ArgumentParser()
++    parser.add_argument('--case',required=True);parser.add_argument('--resource',required=True)
++    parser.add_argument('--run-id',required=True);parser.add_argument('--deadline',type=float,required=True)
++    args=parser.parse_args();directory=Path(args.resource).resolve().parent
++    try:settings_path=read_start(sys.stdin.buffer)
++    except ValueError:
++        print('{"event":"cleanup_ack","resource_opened":false,"resources_closed":true}',flush=True)
++        return 3
++    protocol=os.dup(1)
++    with open(os.devnull,'wb') as sink:
++        os.dup2(sink.fileno(),1);os.dup2(sink.fileno(),2)
++    def emit(value):
++        raw=json.dumps(value,separators=(',',':')).encode()+b'\n'
++        if len(raw)>8192:raise ValueError('bounded protocol')
++        os.write(protocol,raw)
++    def audit(event,values):
++        if event in ('socket.connect','socket.bind','os.system','os.kill'):
++            raise RuntimeError('offline configured schema')
++    sys.addaudithook(audit)
++    sys.path.insert(0,str(Path(__file__).resolve().parent))
++    from schema_entry import _in_owned_job
++    from schema_probe import SchemaProbe,error_kind
++    from source_provider import ConfiguredSourceProvider,_kind
++    from extraction_budget import ExtractionBudget,ExtractionStopped
++    if args.case!='success' or not _in_owned_job():
++        raise RuntimeError('trusted configured owner required')
++    (directory/'configured_backend_started.json').write_text(json.dumps({
++        'run_id':args.run_id,'after_start':True,'in_job':True,'source_kind':'configured'}),encoding='utf-8')
++    provider=ConfiguredSourceProvider();probe=SchemaProbe()
++    stop=threading.Event();done=threading.Event();control_errors=[]
++    def control():
++        try:
++            while sys.stdin.buffer.readline(4096):
++                if not done.is_set():
++                    stop.set()
++                    for owner in (provider,probe):
++                        try:owner.cancel()
++                        except BaseException:control_errors.append('owned_cancel_failed')
++            if not done.is_set():
++                stop.set()
++                for owner in (provider,probe):
++                    try:owner.cancel()
++                    except BaseException:control_errors.append('owned_cancel_failed')
++        except BaseException:control_errors.append('owned_control_failed');stop.set()
++    controller=threading.Thread(target=control,name='configured-control',daemon=False)
++    controller.start()
++    status='failed';kind=None;counts=None;source=None
++    def stage(name,event):emit({'event':'stage_'+event,'stage':name})
++    try:
++        remaining=args.deadline-time.monotonic()
++        if remaining<=0:raise ExtractionStopped('deadline','preflight')
++        budget=ExtractionBudget(remaining,stop.is_set);budget.deadline=min(budget.deadline,args.deadline)
++        stage('source_prepare','enter')
++        source=provider.prepare(settings_path,budget)
++        stage('source_prepare','exit')
++        counts=probe.run(source.db_path,source.key,budget,stage=stage)
++        if provider.state['preparation_release_confirmed'] is not True:
++            raise RuntimeError('source preparation cleanup unconfirmed')
++        value={'run_id':args.run_id,'counts':counts,'application_ack':probe.state['application_ack'],
++            'release_evidence':probe.state['release_evidence'],'source_kind':'configured',
++            'key_preparation_cleanup_confirmed':True}
++        raw=json.dumps(value,separators=(',',':')).encode()
++        with (directory/'schema_result.json').open('wb') as handle:
++            handle.write(raw);handle.flush();os.fsync(handle.fileno())
++        with (directory/'schema_result.commit.json').open('w',encoding='utf-8') as handle:
++            json.dump({'run_id':args.run_id,'payload_sha256':hashlib.sha256(raw).hexdigest()},handle)
++            handle.flush();os.fsync(handle.fileno())
++        status='completed'
++    except BaseException as error:
++        kind=_kind(error)
++        status='cancelled' if stop.is_set() or isinstance(error,ExtractionStopped) else 'failed'
++        counts=None
++        emit({'event':'error','error_type':kind})
++    finally:
++        source=None;settings_path=None
++        try:preparation_clean=provider.close() is True
++        except BaseException as error:preparation_clean=False;kind=kind or _kind(error)
++        probe_clean=(not probe.state['source_attempted'] or probe.state['application_ack'] is True)
++        done.set();emit({'event':'result','status':status});emit({'event':'cleanup_ready'})
++        controller.join(timeout=1)
++        acknowledged=preparation_clean and probe_clean and not controller.is_alive() and not control_errors
++        observation={'run_id':args.run_id,'status':status,'error_kind':kind,
++            'provider':provider.state,'probe':probe.state,'key_preparation_cleanup_confirmed':preparation_clean,
++            'control_joined':not controller.is_alive(),'control_errors':control_errors}
++        (directory/'configured_observation.json').write_text(json.dumps(observation,indent=2),encoding='utf-8')
++        emit({'event':'cleanup_ack','resource_opened':probe.state['resource_opened'],'resources_closed':acknowledged})
++        os.close(protocol)
++    return 0 if status=='completed' and acknowledged else 3
++
++if __name__=='__main__':
++    try:code=main()
++    except BaseException:code=3
++    raise SystemExit(code)
+diff --git a/configured_entry_gate.py b/configured_entry_gate.py
+new file mode 100644
+--- /dev/null
++++ b/configured_entry_gate.py
+@@ -0,0 +1,167 @@
++"""Stdlib-only ingress. No product/provider import or settings read before start."""
++import json
++import math
++import os
++from pathlib import Path
++import sys
++import threading
++import time
++
++MAX_START = 4096
++MAX_OUTPUT = 16 * 1024
++FAILURE_STATUSES = frozenset({'failed', 'cancelled', 'deadline_exceeded', 'cleanup_unconfirmed',
++    'output_or_receipt_rejected', 'spawn_error', 'protocol_error', 'supervisor_error',
++    'spawn_cleanup_unconfirmed', 'receipt_failed', 'output_limit', 'output_rejected'})
++PROOF_FIELDS = ('application_ack', 'os_release_confirmed', 'completion_receipt_valid')
++FRAME_FIELDS = frozenset({'outer_run_id', 'status', 'successful', *PROOF_FIELDS})
++
++
++def _local_file(value):
++    # Shared stdlib-only lexical policy; no settings/provider/native work.
++    from configured_child import explicit_local_file
++    return explicit_local_file(value)
++
++
++def _unique_fields(pairs):
++    value = {}
++    for key, item in pairs:
++        if key in value:
++            raise ValueError('duplicate configured launch field')
++        value[key] = item
++    return value
++
++
++def _read_start(stream):
++    raw = stream.readline(MAX_START + 1)
++    if not raw or len(raw) > MAX_START or not raw.endswith(b'\n'):
++        raise ValueError('bounded configured launch required')
++    try:
++        value = json.loads(raw, object_pairs_hook=_unique_fields)
++    except (ValueError, UnicodeError):
++        raise ValueError('configured launch rejected') from None
++    required = {'op', 'settings_path', 'outer_run_id', 'deadline', 'job_handle'}
++    if (not isinstance(value, dict) or set(value) != required or value['op'] != 'start'
++            or not _local_file(value['settings_path'])
++            or type(value['outer_run_id']) is not str or len(value['outer_run_id']) != 32
++            or any(c not in '0123456789abcdef' for c in value['outer_run_id'])
++            or type(value['job_handle']) is not int or value['job_handle'] <= 0
++            or type(value['deadline']) not in (int, float) or not math.isfinite(value['deadline'])):
++        raise ValueError('configured launch rejected')
++    return value
++
++
++def _verify_job(handle):
++    # This import occurs only after the bounded private start was accepted.
++    from configured_native_owner import verify_inherited_job
++    verify_inherited_job(handle)
++
++
++def _load_entry(site_packages):
++    site = Path(site_packages)
++    if not site.is_absolute() or site.name != 'site-packages' or site.parent.name != 'Lib':
++        raise ValueError('configured runtime rejected')
++    # The base -I -S ingress avoids the venv redirector before assignment. Once
++    # trusted, every nested product worker uses the creator's approved venv.
++    venv = site.parent.parent
++    sys.executable = str(venv / 'Scripts' / 'python.exe')
++    sys.prefix = str(venv)
++    sys.path.append(str(site))
++    import schema_entry
++    return schema_entry
++
++
++def _counts(value):
++    if (not isinstance(value, dict) or set(value) != {'table_count', 'view_count'}
++            or any(type(v) is not int or not 0 <= v < 2**63 for v in value.values())):
++        raise ValueError('schema aggregate rejected')
++    return dict(value)
++
++
++def _validate_frame(value, outer_run_id):
++    if (not isinstance(value, dict) or value.get('outer_run_id') != outer_run_id
++            or type(value.get('status')) is not str
++            or type(value.get('successful')) is not bool
++            or any(type(value.get(key)) is not bool for key in PROOF_FIELDS)):
++        raise ValueError('configured gate output rejected')
++    if value['status'] == 'completed':
++        if (set(value) != FRAME_FIELDS | {'counts'} or value['successful'] is not True
++                or not all(value[key] for key in PROOF_FIELDS)):
++            raise ValueError('configured gate success rejected')
++        return _counts(value['counts'])
++    if (set(value) != FRAME_FIELDS or value['status'] not in FAILURE_STATUSES
++            or value['successful'] is not False):
++        raise ValueError('configured gate failure rejected')
++    return None
++
++
++def _watch_control(stream, cancelled, finished):
++    try:
++        descriptor = stream.fileno()
++    except (AttributeError, OSError):
++        return  # In-memory streams used by pure contract tests have no OS pipe.
++    def watch():
++        try:
++            os.read(descriptor, 1)  # Private pipe: any trailing input or EOF cancels.
++        except OSError:
++            pass
++        if not finished.is_set():
++            cancelled.set()
++    # Raw os.read holds no buffered-stdin lock at interpreter shutdown. The
++    # exact gate process owns this pipe; normal completion may exit with it idle.
++    threading.Thread(target=watch, name='configured-private-control', daemon=True).start()
++
++
++def _execute(stream, directory, site_packages):
++    start = _read_start(stream)
++    # Close the inherited query-only Job handle before any provider work.
++    _verify_job(start['job_handle'])
++    remaining = start['deadline'] - time.monotonic()
++    if not 0 < remaining <= 30:
++        raise ValueError('configured launch deadline rejected')
++    entry = _load_entry(site_packages)
++    context = {'outer_run_id': start['outer_run_id'], 'assigned_before_start': True,
++               'active_process_limit': 8}
++    cancelled, finished = threading.Event(), threading.Event()
++    _watch_control(stream, cancelled, finished)
++    try:
++        result = entry.run_configured(Path(directory) / 'entry', start['settings_path'],
++            overall=remaining, cleanup_budget=3, launch_context=context, cancel_event=cancelled)
++    finally:
++        finished.set()
++    required = {'status', 'successful', *PROOF_FIELDS}
++    known = required | {'counts', 'scope', 'adapter', 'run_id', 'runner', 'LINE_read'}
++    if not isinstance(result, dict) or not required <= set(result) <= known:
++        raise ValueError('configured inner result rejected')
++    public = {'outer_run_id': start['outer_run_id'], **{key: result[key] for key in required}}
++    if 'counts' in result:
++        public['counts'] = result['counts']
++    _validate_frame(public, start['outer_run_id'])
++    return public
++
++
++def main():
++    # Isolated -S interpreter: all imports above are stdlib. Redirect before parsing
++    # the private frame so provider prints and raw errors cannot reach public pipes.
++    protocol = os.dup(1)
++    try:
++        with open(os.devnull, 'wb') as sink:
++            os.dup2(sink.fileno(), 1)
++            os.dup2(sink.fileno(), 2)
++        if len(sys.argv) != 3:
++            return 3
++        sys.path.insert(0, str(Path(__file__).resolve().parent))
++        result = _execute(sys.stdin.buffer, sys.argv[1], sys.argv[2])
++        raw = json.dumps(result, separators=(',', ':')).encode() + b'\n'
++        if len(raw) > MAX_OUTPUT:
++            return 3
++        os.write(protocol, raw)
++        return 0 if result['successful'] else 3
++    except BaseException:
++        # Missing/invalid start or Job proof is never an application acknowledgement.
++        return 3
++    finally:
++        os.close(protocol)
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/configured_launcher.py b/configured_launcher.py
+new file mode 100644
+--- /dev/null
++++ b/configured_launcher.py
+@@ -0,0 +1,352 @@
++"""Fixed local configured-schema launcher. No MCP registration or arbitrary argv."""
++import json
++import os
++from pathlib import Path
++import sys
++import threading
++import time
++import uuid
++
++from configured_entry_gate import _local_file, _unique_fields, _validate_frame
++
++WORK_SECONDS = 30
++CLEANUP_SECONDS = 3
++MAX_BYTES = 16 * 1024
++RETAINED = {}
++_REGISTRY_LOCK = threading.RLock()
++
++
++def _backend():
++    from configured_native_owner import Backend
++    return Backend()
++
++
++def _label(error):
++    name = type(error).__name__
++    return name if name in {'OSError', 'ValueError', 'TimeoutError', 'TimeoutExpired',
++                           'KeyboardInterrupt', 'SystemExit', 'RuntimeError'} else 'UnexpectedError'
++
++
++def _write_result(path, value):
++    raw = json.dumps(value, separators=(',', ':')).encode()
++    if len(raw) > MAX_BYTES:
++        raise ValueError('bounded launcher receipt required')
++    temporary = path.with_suffix('.tmp')
++    temporary.write_bytes(raw)
++    temporary.replace(path)
++
++
++class _Owner:
++    def __init__(self, directory, settings_path, cancel_event=None):
++        self.directory = Path(directory)
++        self.token = uuid.uuid4().hex
++        self.started = time.monotonic()
++        self.work_deadline = self.started + WORK_SECONDS
++        self.cleanup_deadline = None
++        self._cooperative_deadline = None
++        self._settings = settings_path
++        self.cancel_event = cancel_event
++        self.backend = self.job = self.child = None
++        self.assigned = self.start_sent = self.forced = False
++        self.spawn_done = threading.Event()
++        self.stop = threading.Event()
++        self.cleanup_lock = threading.RLock()
++        self.output = bytearray()
++        self.output_bytes = 0
++        self.errors = []
++        self.status = 'starting'
++        self.cleaned = False
++        self.initial_result = None
++        self.primary_interrupt = None
++        # Ownership precedes every native acquisition and fallible persistence.
++        with _REGISTRY_LOCK:
++            RETAINED[self.token] = self
++
++    def error(self, point, error):
++        if len(self.errors) < 16:
++            self.errors.append({'operation': point, 'type': _label(error)})
++        if isinstance(error, (KeyboardInterrupt, SystemExit)) and self.primary_interrupt is None:
++            self.primary_interrupt = error
++
++    def _register_job(self, job):
++        self.job = job
++
++    def _register_child(self, child):
++        self.child = child
++
++    def _allowed(self):
++        return (not self.stop.is_set() and not self._cancelled()
++                and time.monotonic() < self.work_deadline)
++
++    def _cancelled(self):
++        event = getattr(self, 'cancel_event', None)
++        return event is not None and event.is_set()
++
++    def _spawn(self):
++        try:
++            if not self._allowed():
++                return
++            self.backend = _backend()
++            self.job = self.backend.new_job(self._register_job)
++            self.job.configure()
++            if self.job.policy() != {'kill_on_close': True, 'active_process_limit': 8}:
++                raise OSError('configured Job policy rejected')
++            if not self._allowed():
++                return
++            inherited = self.job.inherit()
++            argv = [sys._base_executable, '-I', '-S', '-B',
++                    str(Path(__file__).with_name('configured_entry_gate.py')),
++                    str(self.directory), str(Path(sys.prefix) / 'Lib' / 'site-packages')]
++            self.child = self.backend.spawn(argv, (inherited,), self._register_child)
++            self.job.close_inherited()
++            if not self._allowed():
++                return  # A late child stays suspended and receives no private start.
++            if self.child.resumed:
++                raise OSError('configured child was not suspended')
++            self.job.assign(self.child)
++            self.assigned = True
++            if not self.job.member(self.child):
++                raise OSError('exact configured membership rejected')
++            if self.job.policy() != {'kill_on_close': True, 'active_process_limit': 8}:
++                raise OSError('configured Job policy changed')
++            if not self._allowed():
++                return
++            self.child.resume()
++            if not self._allowed():
++                return
++            payload = (json.dumps({'op': 'start', 'settings_path': self._settings,
++                'outer_run_id': self.token, 'deadline': self.work_deadline,
++                'job_handle': inherited}, separators=(',', ':')) + '\n').encode()
++            if len(payload) > 4096:
++                raise ValueError('bounded configured launch required')
++            # CPython Event.set uses this same condition. Serialize cancellation
++            # with the private start commit, instead of a check/write race.
++            condition = self.cancel_event._cond if self.cancel_event is not None else None
++            if condition is not None and not condition.acquire(timeout=max(0, self.work_deadline-time.monotonic())):
++                self.status = 'deadline_exceeded'
++                return
++            try:
++                if not self._allowed():
++                    return
++                self.child.stdin.write(payload)
++                self.child.stdin.flush()
++                self.start_sent = True
++                self.status = 'running'
++            finally:
++                if condition is not None:condition.release()
++        except BaseException as error:
++            self.status = 'spawn_error'
++            self.error('spawn', error)
++        finally:
++            self._settings = None
++            self.spawn_done.set()
++            if self.stop.is_set() and self.cleanup_deadline is not None:
++                self.cleanup(self.cleanup_deadline)
++
++    def pump(self):
++        if self.child is None or self.backend is None:
++            return
++        for label in ('stdout', 'stderr'):
++            for _ in range(4):
++                raw = self.backend.read_available(self.child, label, 4096)
++                if not raw:
++                    break
++                self.output_bytes += len(raw)
++                if self.output_bytes > MAX_BYTES:
++                    self.status = 'output_limit'
++                    self.stop.set()
++                    return
++                if label == 'stdout':
++                    self.output.extend(raw)
++                else:
++                    self.status = 'output_rejected'
++                    self.stop.set()
++
++    def supervise(self):
++        while True:
++            self.pump()
++            if self.stop.is_set():
++                return
++            if self._cancelled():
++                self.status = 'cancelled'
++                return
++            if self.spawn_done.is_set():
++                if self.child is None or self.status == 'spawn_error':
++                    return
++            if time.monotonic() >= self.work_deadline:
++                self.status = 'deadline_exceeded'
++                return
++            if self.spawn_done.is_set():
++                if self.child.poll() is not None:
++                    self.pump()
++                    # Polling or the final drain may cross the work deadline.
++                    # An output rejection keeps its already recorded cause.
++                    if not self.stop.is_set() and time.monotonic() >= self.work_deadline:
++                        self.status = 'deadline_exceeded'
++                    if self._cancelled():
++                        self.status = 'cancelled'
++                    return
++            time.sleep(0.005)
++
++    def _active(self):
++        return self.job.active() if self.job is not None else 0
++
++    def cleanup(self, deadline):
++        self.stop.set()
++        if not self.cleanup_lock.acquire(timeout=max(0, deadline - time.monotonic())):
++            return False
++        try:
++            if self.cleaned:
++                return True
++            if self._cooperative_deadline is None:
++                # One cooperative window per owner, clipped by this cleanup's
++                # absolute deadline. Exact retries cannot renew the allowance.
++                self._cooperative_deadline = min(deadline, time.monotonic() + 1)
++            terminated = False
++            while True:
++                child = self.child
++                if child is not None:
++                    try:
++                        if child.stdin is not None and not child.stdin.closed:
++                            child.stdin.close()  # EOF is the cooperative request.
++                        self.pump()
++                    except BaseException as error:
++                        self.error('cleanup_io', error)
++                try:
++                    done = child is None or child._handle is None or child.poll() is not None
++                    active = self._active()
++                except BaseException as error:
++                    self.error('cleanup_poll', error)
++                    done, active = False, None
++                if self.spawn_done.is_set() and done and active == 0:
++                    break
++                now = time.monotonic()
++                cooperative = (self.assigned and self.start_sent
++                               and now < self._cooperative_deadline)
++                # An unstarted creation stays suspended and is cleaned at once.
++                # Only started, assigned descendants may finish after EOF.
++                if not terminated and not cooperative:
++                    try:
++                        if self.assigned and self.job is not None:
++                            self.job.terminate()
++                            terminated = True
++                            self.forced = True
++                        elif child is not None and child._handle is not None and not done:
++                            child.kill()
++                            terminated = True
++                            self.forced = True
++                    except BaseException as error:
++                        self.error('terminate', error)
++                if time.monotonic() >= deadline:
++                    return False
++                wait_until = min(deadline, self._cooperative_deadline) if cooperative else deadline
++                time.sleep(min(0.005, max(0, wait_until - time.monotonic())))
++            # Creation has ceased; these exact handles are no longer used by spawn.
++            if child is not None:
++                if child._handle is not None:
++                    child.wait(timeout=max(0, deadline - time.monotonic()))
++                for name in ('stdin', 'stdout', 'stderr'):
++                    stream = getattr(child, name)
++                    if stream is not None and not stream.closed:
++                        stream.close()
++                if not self.backend.close_startup(child):
++                    return False
++                for handle in (child._thread, child._handle):
++                    if handle is not None and not handle.closed:
++                        handle.Close()
++            if self.job is not None:
++                self.job.close()
++            self.cleaned = True
++            with _REGISTRY_LOCK:
++                RETAINED.pop(self.token, None)
++            return True
++        except BaseException as error:
++            self.error('cleanup', error)
++            return False
++        finally:
++            self.cleanup_lock.release()
++
++    def public(self):
++        if self._cancelled() and self.status in {'starting', 'running'}:
++            self.status = 'cancelled'
++        result = {'outer_run_id': self.token, 'adapter': 'configured_local_launcher',
++                  'status': self.status, 'successful': False, 'application_ack': False,
++                  'os_release_confirmed': self.cleaned, 'retry_required': not self.cleaned,
++                  'assigned_before_resume': self.assigned, 'start_sent': self.start_sent,
++                  'forced_termination': self.forced, 'errors': list(self.errors)}
++        if not self.cleaned:
++            result.update(status='cleanup_unconfirmed', primary_status=self.status)
++        elif self.forced and self.status == 'running':
++            result.update(status='cleanup_unconfirmed', primary_status=self.status)
++        try:
++            value = json.loads(bytes(self.output), object_pairs_hook=_unique_fields)
++            counts = _validate_frame(value, self.token)
++            if self.start_sent and self.status == 'running':
++                expected_exit = 0 if value['successful'] else 3
++                if self.child.returncode != expected_exit:
++                    raise ValueError('configured gate exit rejected')
++                if self.forced:
++                    # A validated inner outcome is provenance only after force.
++                    # OS release cannot stand in for application acknowledgement.
++                    result.update(status='cleanup_unconfirmed', primary_status=value['status'])
++                elif self.cleaned:
++                    result.update(status=value['status'], application_ack=value['application_ack'])
++                    if value['successful']:
++                        result.update(successful=True, counts=counts)
++        except (ValueError, TypeError, AttributeError):
++            if result['status'] == 'running':
++                result['status'] = 'output_rejected'
++        return result
++
++
++def run(directory, settings_path, *, cancel_event=None):
++    """Run the one configured schema aggregate under a newly created exact Job."""
++    if cancel_event is not None and not isinstance(cancel_event, threading.Event):
++        raise ValueError('local cancellation event required')
++    if not _local_file(settings_path):
++        raise ValueError('explicit local settings required')
++    # Reserve frame metadata inside the same 4096-byte private input limit.
++    if len(json.dumps({'settings_path': settings_path}).encode()) > 3800:
++        raise ValueError('bounded configured settings required')
++    if not _local_file(os.fspath(directory)):
++        raise ValueError('explicit local output required')
++    directory = Path(directory).resolve()
++    if not _local_file(str(directory)):
++        raise ValueError('explicit local output required')
++    directory.mkdir(parents=True, exist_ok=False)
++    owner = _Owner(directory, settings_path, cancel_event)
++    thread = threading.Thread(target=owner._spawn, name='configured-owned-spawn', daemon=True)
++    try:
++        thread.start()
++        owner.supervise()
++    except BaseException as error:
++        owner.error('supervise', error)
++        owner.status = 'supervisor_error'
++    finally:
++        owner.stop.set()
++        owner.cleanup_deadline = min(time.monotonic() + CLEANUP_SECONDS,
++                                     owner.work_deadline + CLEANUP_SECONDS)
++        owner.cleanup(owner.cleanup_deadline)
++    result = owner.public()
++    owner.initial_result = dict(result)
++    try:
++        _write_result(directory / 'launcher_completion.json', result)
++    except BaseException as error:
++        owner.error('receipt', error)
++        result.update(successful=False, status='receipt_failed')
++        result.pop('counts', None)
++    if owner.primary_interrupt is not None:
++        owner.primary_interrupt.launcher_owner = owner
++        raise owner.primary_interrupt from None
++    return result
++
++
++def retry_cleanup(outer_run_id):
++    """Recover only a retained exact owner; preserve its original result."""
++    with _REGISTRY_LOCK:
++        owner = RETAINED[outer_run_id]
++    owner.cleanup(time.monotonic() + CLEANUP_SECONDS)
++    recovery = {'outer_run_id': owner.token, 'os_release_confirmed': owner.cleaned,
++                'retry_required': not owner.cleaned, 'errors': list(owner.errors)}
++    _write_result(owner.directory / 'launcher_recovery.json', recovery)
++    return recovery
+diff --git a/configured_native_owner.py b/configured_native_owner.py
+new file mode 100644
+--- /dev/null
++++ b/configured_native_owner.py
+@@ -0,0 +1,159 @@
++"""Windows Job operations for the fixed configured product launcher."""
++import ctypes as C
++from ctypes import wintypes as W
++import os
++
++FLAGS = 0x2000 | 0x8  # KILL_ON_JOB_CLOSE | ACTIVE_PROCESS_LIMIT; no breakaway.
++
++
++class BasicLimit(C.Structure):
++    _fields_ = [('process_time', C.c_longlong), ('job_time', C.c_longlong), ('flags', W.DWORD),
++        ('min_ws', C.c_size_t), ('max_ws', C.c_size_t), ('active_limit', W.DWORD),
++        ('affinity', C.c_size_t), ('priority', W.DWORD), ('scheduling', W.DWORD)]
++
++
++class IOCounts(C.Structure):
++    _fields_ = [(n, C.c_ulonglong) for n in ('ro', 'wo', 'oo', 'rb', 'wb', 'ob')]
++
++
++class ExtendedLimit(C.Structure):
++    _fields_ = [('basic', BasicLimit), ('io', IOCounts), ('process_memory', C.c_size_t),
++        ('job_memory', C.c_size_t), ('peak_process_memory', C.c_size_t), ('peak_job_memory', C.c_size_t)]
++
++
++class Accounting(C.Structure):
++    _fields_ = [(n, C.c_longlong) for n in ('user', 'kernel', 'period_user', 'period_kernel')] + [
++        (n, W.DWORD) for n in ('faults', 'total', 'active', 'terminated')]
++
++
++def _kernel():
++    kernel = C.WinDLL('kernel32', use_last_error=True, winmode=0x800)
++    for name, args, result in [
++        ('CreateJobObjectW', [C.c_void_p, W.LPCWSTR], W.HANDLE),
++        ('SetInformationJobObject', [W.HANDLE, C.c_int, C.c_void_p, W.DWORD], W.BOOL),
++        ('QueryInformationJobObject', [W.HANDLE, C.c_int, C.c_void_p, W.DWORD, C.c_void_p], W.BOOL),
++        ('AssignProcessToJobObject', [W.HANDLE, W.HANDLE], W.BOOL),
++        ('IsProcessInJob', [W.HANDLE, W.HANDLE, C.POINTER(W.BOOL)], W.BOOL),
++        ('TerminateJobObject', [W.HANDLE, W.UINT], W.BOOL),
++        ('CloseHandle', [W.HANDLE], W.BOOL),
++        ('GetCurrentProcess', [], W.HANDLE),
++        ('PeekNamedPipe', [W.HANDLE, C.c_void_p, W.DWORD, C.c_void_p, C.POINTER(W.DWORD), C.c_void_p], W.BOOL),
++    ]:
++        function = getattr(kernel, name)
++        function.argtypes, function.restype = args, result
++    return kernel
++
++
++def _check(value):
++    if not value:
++        raise OSError('configured native operation unavailable')
++    return value
++
++
++def _policy(kernel, handle):
++    limits = ExtendedLimit()
++    _check(kernel.QueryInformationJobObject(handle, 9, C.byref(limits), C.sizeof(limits), None))
++    return {'kill_on_close': limits.basic.flags == FLAGS,
++            'active_process_limit': int(limits.basic.active_limit)}
++
++
++def verify_inherited_job(handle):
++    kernel = _kernel()
++    try:
++        policy = _policy(kernel, handle)
++        member = W.BOOL()
++        _check(kernel.IsProcessInJob(kernel.GetCurrentProcess(), handle, C.byref(member)))
++        if not member.value or policy != {'kill_on_close': True, 'active_process_limit': 8}:
++            raise OSError('exact configured Job rejected')
++    finally:
++        _check(kernel.CloseHandle(handle))
++
++
++class Job:
++    def __init__(self):
++        self.kernel = _kernel()
++        self.handle = self.inherited_handle = None
++
++    def open(self):
++        self.handle = _check(self.kernel.CreateJobObjectW(None, None))
++
++    def configure(self):
++        limits = ExtendedLimit()
++        limits.basic.flags, limits.basic.active_limit = FLAGS, 8
++        _check(self.kernel.SetInformationJobObject(self.handle, 9, C.byref(limits), C.sizeof(limits)))
++
++    def policy(self):
++        return _policy(self.kernel, self.handle)
++
++    def inherit(self):
++        import _winapi as api
++        current = api.GetCurrentProcess()
++        # Child receives JOB_OBJECT_QUERY only, not terminate/set-policy access.
++        self.inherited_handle = api.DuplicateHandle(current, self.handle, current, 4, True, 0)
++        return self.inherited_handle
++
++    def close_inherited(self):
++        if self.inherited_handle is not None:
++            _check(self.kernel.CloseHandle(self.inherited_handle))
++            self.inherited_handle = None
++
++    def assign(self, child):
++        _check(self.kernel.AssignProcessToJobObject(self.handle, int(child._handle)))
++
++    def member(self, child):
++        value = W.BOOL()
++        _check(self.kernel.IsProcessInJob(int(child._handle), self.handle, C.byref(value)))
++        return bool(value.value)
++
++    def active(self):
++        if self.handle is None:
++            return 0
++        value = Accounting()
++        _check(self.kernel.QueryInformationJobObject(self.handle, 1, C.byref(value), C.sizeof(value), None))
++        return int(value.active)
++
++    def terminate(self):
++        _check(self.kernel.TerminateJobObject(self.handle, 125))
++
++    def close(self):
++        self.close_inherited()
++        if self.handle is not None:
++            _check(self.kernel.CloseHandle(self.handle))
++            self.handle = None
++
++
++class Backend:
++    def __init__(self):
++        self.kernel = _kernel()
++
++    def new_job(self, register):
++        job = Job()
++        register(job)
++        job.open()
++        return job
++
++    def spawn(self, argv, inherited, register):
++        from configured_suspended import create
++        return create(argv, inherited, register)
++
++    def read_available(self, child, label, limit):
++        import msvcrt
++        stream = getattr(child, label)
++        if stream is None or stream.closed:
++            return b''
++        available = W.DWORD()
++        if not self.kernel.PeekNamedPipe(msvcrt.get_osfhandle(stream.fileno()), None, 0, None, C.byref(available), None):
++            if C.get_last_error() in (109, 232):
++                return b''
++            raise OSError('configured pipe unavailable')
++        return stream.read(min(4096, limit, available.value)) if available.value else b''
++
++    def close_startup(self, child):
++        import _winapi as api
++        for handle in list(child.transient_handles):
++            api.CloseHandle(handle)
++            child.transient_handles.remove(handle)
++        for fd in list(child.transient_fds):
++            os.close(fd)
++            child.transient_fds.remove(fd)
++        return not (child.transient_handles or child.transient_fds)
+diff --git a/configured_suspended.py b/configured_suspended.py
+new file mode 100644
+--- /dev/null
++++ b/configured_suspended.py
+@@ -0,0 +1,100 @@
++"""Exact new-child ownership; explicit inherited handles; no process lookup."""
++import _winapi as api
++import ctypes
++from ctypes import wintypes as W
++import msvcrt
++import os
++import subprocess
++
++kernel = ctypes.WinDLL('kernel32', use_last_error=True, winmode=0x800)
++kernel.ResumeThread.argtypes = [W.HANDLE]
++kernel.ResumeThread.restype = W.DWORD
++
++
++class Handle:
++    def __init__(self, value):
++        self.value, self.closed = value, False
++
++    def __int__(self):
++        return self.value
++
++    def Close(self):
++        if not self.closed:
++            api.CloseHandle(self.value)
++            self.closed = True
++
++
++class Child:
++    def __init__(self):
++        self.stdin = self.stdout = self.stderr = None
++        self._handle = self._thread = None
++        self.returncode = None
++        self.resumed = False
++        self.transient_handles, self.transient_fds = [], []
++
++    def resume(self):
++        count = kernel.ResumeThread(int(self._thread))
++        if count != 1:
++            raise OSError('owned resume unavailable')
++        self.resumed = True
++
++    def poll(self):
++        if self.returncode is None:
++            status = api.WaitForSingleObject(int(self._handle), 0)
++            if status == api.WAIT_OBJECT_0:
++                self.returncode = api.GetExitCodeProcess(int(self._handle))
++            elif status != api.WAIT_TIMEOUT:
++                raise OSError('owned wait unavailable')
++        return self.returncode
++
++    def wait(self, timeout):
++        if self.returncode is None:
++            status = api.WaitForSingleObject(int(self._handle), max(0, int(timeout * 1000)))
++            if status == api.WAIT_TIMEOUT:
++                raise subprocess.TimeoutExpired('configured-owned-child', timeout)
++            if status != api.WAIT_OBJECT_0:
++                raise OSError('owned wait unavailable')
++            self.returncode = api.GetExitCodeProcess(int(self._handle))
++        return self.returncode
++
++    def kill(self):
++        api.TerminateProcess(int(self._handle), 125)
++
++
++def create(argv, inherited, register):
++    child = Child()
++    register(child)  # Partial pipe/CreateProcess failure still has an exact owner.
++    raw, child_ends = child.transient_handles, []
++    try:
++        current = api.GetCurrentProcess()
++        for label, parent_reads in (('stdin', False), ('stdout', True), ('stderr', True)):
++            read, write = api.CreatePipe(None, 0)
++            raw.extend((read, write))
++            parent, remote = (read, write) if parent_reads else (write, read)
++            allowed = api.DuplicateHandle(current, remote, current, 0, True, api.DUPLICATE_SAME_ACCESS)
++            raw.append(allowed)
++            child_ends.append(allowed)
++            api.CloseHandle(remote)
++            raw.remove(remote)
++            fd = msvcrt.open_osfhandle(parent, (os.O_RDONLY if parent_reads else os.O_WRONLY) | os.O_BINARY)
++            raw.remove(parent)
++            child.transient_fds.append(fd)
++            setattr(child, label, os.fdopen(fd, 'rb' if parent_reads else 'wb', buffering=0))
++            child.transient_fds.remove(fd)
++        startup = subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESTDHANDLES,
++            hStdInput=child_ends[0], hStdOutput=child_ends[1], hStdError=child_ends[2],
++            lpAttributeList={'handle_list': child_ends + list(inherited)})
++        hp, ht, _, _ = api.CreateProcess(argv[0], subprocess.list2cmdline(argv), None, None,
++            True, subprocess.CREATE_NO_WINDOW | 0x4, None, None, startup)
++        child._handle, child._thread = Handle(hp), Handle(ht)
++        return child
++    finally:
++        failure = None
++        for handle in list(raw):
++            try:
++                api.CloseHandle(handle)
++                raw.remove(handle)
++            except OSError as error:
++                failure = error
++        if failure is not None:
++            raise failure
+diff --git a/db_reader.py b/db_reader.py
+--- a/db_reader.py
++++ b/db_reader.py
+@@ -19,7 +19,7 @@
+ from pathlib import Path
+ from safety import CursorCodec, page
+ from readonly_errors import SnapshotUnavailable
+-from readonly_client import WorkerConnection
++from readonly_client import WorkerConnection, WrongKeyError
+ from extraction_budget import ExtractionStopped
+ 
+ # -- Cipher config: CONFIRMED via phase0.py against LINE 26.3 ------------------
+@@ -88,25 +88,82 @@
+     return WorkerConnection(db_path, key)
+ 
+ 
+-def probe_key(db_path: str, key: str) -> bool:
+-    """Return True if key decrypts the .edb under the configured wxSQLite3 scheme.
+-    Called by key_extractor to validate memory candidates. Boolean by contract: a
+-    failure here means 'this candidate did not decrypt', nothing more. Use
+-    preflight_db_access() to tell a broken environment from a wrong key."""
+-    if not isinstance(db_path, str) or not os.path.exists(db_path):
+-        return False
+-    conn = None
++_KEY_ERROR_TYPES = frozenset({
++    "OSError", "TimeoutExpired", "SnapshotUnavailable", "WrongKeyError",
++    "ExtractionStopped", "KeyboardInterrupt", "SystemExit", "ValueError",
++    "RuntimeError", "UnexpectedError",
++})
++
++
++def _key_error_label(error, attribute="primary_error_type"):
++    label = getattr(error, attribute, None)
++    if label is None:
++        if attribute == "cleanup_error_type":
++            return None
++        label = type(error).__name__
++    return label if type(label) is str and label in _KEY_ERROR_TYPES else "UnexpectedError"
++
++
++def _carry_key_reader_error(outgoing, error, *, worker=None, cleanup=None):
++    """Carry exact ownership in memory; expose only finite error labels."""
++    owner = worker if worker is not None else getattr(error, "worker", None)
++    primary_label = _key_error_label(error)
++    cleanup_label = (
++        _key_error_label(cleanup, "cleanup_error_type") or _key_error_label(cleanup)
++        if cleanup is not None else _key_error_label(error, "cleanup_error_type")
++    )
++    if owner is not None:
++        outgoing.worker = owner
++    outgoing.primary_error_type = primary_label
++    outgoing.cleanup_error_type = cleanup_label
++    return outgoing
++
++
++def _key_reader_attempt(db_path, key):
++    conn, error = None, None
+     try:
+         conn = _open_encrypted(db_path, key)
+         next(conn.execute("SELECT count(*) FROM sqlite_master;"))
++    except BaseException as primary:
++        error = primary
++    if conn is not None:
++        try:
++            conn.close()
++        except BaseException as cleanup:
++            # Match reader interruption precedence while retaining both labels.
++            outgoing = error if isinstance(error, (KeyboardInterrupt, SystemExit)) else cleanup
++            if isinstance(error, ExtractionStopped) and not isinstance(cleanup, (KeyboardInterrupt, SystemExit)):
++                outgoing = error
++            error = _carry_key_reader_error(outgoing, error if error is not None else cleanup,
++                                           worker=conn, cleanup=cleanup)
++    return conn, error
++
++
++def _key_failure_released(error):
++    owner = getattr(error, "worker", None)
++    return (_key_error_label(error, "cleanup_error_type") is None
++            and (owner is None or getattr(owner, "_released", False) is True))
++
++
++def probe_key(db_path: str, key: str) -> bool:
++    """Return True if key decrypts the .edb under the configured wxSQLite3 scheme.
++    Called by key_extractor to validate memory candidates. Ordinary candidate
++    rejection stays boolean; source/cleanup failures retain their reader owner.
++    Use preflight_db_access() to check the environment before probing."""
++    if not isinstance(db_path, str) or not os.path.exists(db_path):
++        return False
++    conn, error = _key_reader_attempt(db_path, key)
++    if error is None:
+         return True
+-    except SnapshotUnavailable:
+-        raise
+-    except Exception:
++    if not isinstance(error, Exception) or isinstance(error, ExtractionStopped):
++        raise _carry_key_reader_error(error, error, worker=conn) from None
++    if isinstance(error, WrongKeyError) and _key_failure_released(error):
+         return False
+-    finally:
+-        if conn is not None:
+-            conn.close()
++    if isinstance(error, SnapshotUnavailable) or getattr(error, "worker", None) is not None:
++        raise _carry_key_reader_error(
++            SnapshotUnavailable("LINE database probe failed; diagnostic details suppressed"),
++            error, worker=conn) from None
++    return False
+ 
+ 
+ class DbAccessError(Exception):
+@@ -133,25 +190,21 @@
+         raise DbAccessError("file not found; check the configured database path locally") from None
+     if not os.access(db_path, os.R_OK):
+         raise DbAccessError("no read permission; check database access locally") from None
+-    try:
+-        conn = _open_encrypted(db_path, "0" * 32)  # deliberately wrong key
+-        try:
+-            next(conn.execute("SELECT count(*) FROM sqlite_master;"))
+-        finally:
+-            conn.close()
+-    except ExtractionStopped:
+-        raise
+-    except Exception as e:  # noqa: BLE001 -- classified below, not swallowed
+-        msg = str(e).lower()
+-        if any(s in msg for s in _WRONG_KEY_SIGNALS):
+-            return  # normal: encrypted DB, wrong key -> engine healthy
+-        if any(s in msg for s in _LOCK_SIGNALS):
+-            raise DbAccessError("database is locked; stop and check the local file state") from None
+-        if any(s in msg for s in _ACCESS_SIGNALS):
+-            raise DbAccessError("cannot open the DB file (permission/handle); check access locally") from None
+-        raise DbAccessError("unexpected DB access error; cipher and file state are unverified") from None
+-    # A dummy key that actually decrypts is implausible, but if so the DB is fine.
+-    return
++    conn, error = _key_reader_attempt(db_path, "0" * 32)  # deliberately wrong key
++    if error is None:
++        return
++    if not isinstance(error, Exception) or isinstance(error, ExtractionStopped):
++        raise _carry_key_reader_error(error, error, worker=conn) from None
++    msg = str(error).lower()
++    if any(s in msg for s in _WRONG_KEY_SIGNALS) and _key_failure_released(error):
++        return  # wrong key with successful cleanup -> engine healthy
++    if any(s in msg for s in _LOCK_SIGNALS):
++        message = "database is locked; stop and check the local file state"
++    elif any(s in msg for s in _ACCESS_SIGNALS):
++        message = "cannot open the DB file (permission/handle); check access locally"
++    else:
++        message = "unexpected DB access error; cipher and file state are unverified"
++    raise _carry_key_reader_error(DbAccessError(message), error, worker=conn) from None
+ 
+ 
+ def extract_urls_from_text(text: str | None) -> list[str]:
+diff --git a/key_extractor.py b/key_extractor.py
+--- a/key_extractor.py
++++ b/key_extractor.py
+@@ -14,7 +14,9 @@
+ import re
+ import subprocess
+ import time
+-from line_process_identity import configure_kernel, open_verified_line_process
++from line_process_identity import (
++    configure_kernel, open_verified_line_process, close_verified_process, VerifiedProcess,
++)
+ from extraction_budget import ExtractionBudget, ExtractionStopped, current_budget, extraction_scope
+ 
+ PROCESS_VM_READ = 0x0010
+@@ -127,9 +129,12 @@
+     budget = current_budget()
+     if budget is not None:
+         budget.check('discovery')
++    owner = VerifiedProcess(None, [])
+     handle = kernel.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+     if handle in (None, 0, -1, ctypes.c_void_p(-1).value):
+         raise ProcessDiscoveryError("unavailable") from None
++    owner.retain(kernel, handle)
++    failure = None
+     try:
+         if budget is not None:
+             budget.check('discovery')
+@@ -150,8 +155,11 @@
+                     return sorted(pids)
+             success = kernel.Process32NextW(handle, ctypes.byref(entry))
+         raise ProcessDiscoveryError("unavailable") from None
++    except BaseException as error:
++        failure = error
+     finally:
+-        kernel.CloseHandle(handle)
++        close_verified_process(owner, failure,
++            message="LINE process enumeration unavailable; process state is unknown")
+ 
+ 
+ def validate_key_format(candidate: str) -> bool:
+@@ -161,6 +169,7 @@
+ 
+ 
+ def find_line_pid() -> int | None:
++    from db_reader import _carry_key_reader_error
+     # Absolute path avoids PATH/search-order hijack of a spoofed tasklist.exe.
+     tasklist = os.path.join(
+         os.environ.get("SystemRoot", r"C:\Windows"), "System32", "tasklist.exe"
+@@ -186,7 +195,9 @@
+                     pids.add(int(parts[1]))
+     except ExtractionStopped:
+         raise
+-    except Exception:
++    except Exception as error:
++        if getattr(error, 'worker', None) is not None:
++            raise _carry_key_reader_error(ProcessDiscoveryError("unavailable"), error) from None
+         # A failed tool does not establish absence; do not expose its error.
+         pids.clear()
+     if not pids:
+@@ -194,8 +205,8 @@
+             pids = set(_enumerate_line_pids())
+         except ExtractionStopped:
+             raise
+-        except Exception:
+-            raise ProcessDiscoveryError("unavailable") from None
++        except Exception as error:
++            raise _carry_key_reader_error(ProcessDiscoveryError("unavailable"), error) from None
+     if len(pids) > 1:
+         raise ProcessDiscoveryError("ambiguous") from None
+     if budget is not None:
+@@ -220,12 +231,12 @@
+     if verified is None:
+         budget.check('identity')
+         return []
+-    handle = verified.handle
+-
+-    counts: "Counter[str]" = Counter()
+-    address = 0
+-    carry, carry_truncated, previous_read_end = b'', False, None
+-    try:
++    failure = None
++    try:
++        handle = verified.handle
++        counts: "Counter[str]" = Counter()
++        address = 0
++        carry, carry_truncated, previous_read_end = b'', False, None
+         budget.check('identity')
+         mbi = MEMORY_BASIC_INFORMATION()
+         sz = ctypes.sizeof(mbi)
+@@ -275,8 +286,11 @@
+             if next_addr <= address or next_addr >= 0x7FFFFFFF0000:
+                 break
+             address = next_addr
++    except BaseException as error:
++        failure = error
+     finally:
+-        verified.close()
++        close_verified_process(verified, failure,
++            message="LINE memory inspection failed; diagnostic details suppressed")
+ 
+     return [c for c, _ in counts.most_common() if validate_key_format(c)]
+ 
+@@ -314,33 +328,41 @@
+ 
+ 
+ def _extract_key_with_budget(edb_path, budget):
++    from db_reader import preflight_db_access, probe_key, _carry_key_reader_error
+     budget.check('discovery')
+ 
+-    pid = find_line_pid()
+-    budget.check('discovery')
++    try:
++        pid = find_line_pid()
++        budget.check('discovery')
++    except ExtractionStopped:
++        raise
++    except Exception as error:
++        outgoing = error if isinstance(error, ProcessDiscoveryError) else ProcessDiscoveryError("unavailable")
++        raise _carry_key_reader_error(outgoing, error) from None
+     if pid is None:
+         raise RuntimeError("LINE is not running. Start LINE and try again.")
+ 
+     # Preflight the DB so a broken environment (missing file, permission, lock,
+     # cipher) is reported for what it is, instead of being swallowed by the probe
+     # loop and misreported as 'none of the keys worked / LINE updated'.
+-    from db_reader import preflight_db_access, DbAccessError, probe_key
+     try:
+         budget.check('preflight')
+         preflight_db_access(edb_path)
+         budget.check('preflight')
+     except ExtractionStopped:
+         raise
+-    except Exception:
+-        raise RuntimeError("Cannot access the LINE database; check local file access and cipher setup") from None
++    except Exception as error:
++        raise _carry_key_reader_error(RuntimeError(
++            "Cannot access the LINE database; check local file access and cipher setup"), error) from None
+ 
+     try:
+         candidates = _scan_memory_regions(pid)
+         budget.check('memory_scan')
+     except ExtractionStopped:
+         raise
+-    except Exception:
+-        raise RuntimeError("LINE memory inspection failed; diagnostic details suppressed") from None
++    except Exception as error:
++        raise _carry_key_reader_error(RuntimeError(
++            "LINE memory inspection failed; diagnostic details suppressed"), error) from None
+     if not candidates:
+         raise RuntimeError(
+             "Could not read LINE process memory or find supported key candidates. "
+@@ -358,8 +380,9 @@
+             budget.check('candidate_probe')
+         except ExtractionStopped:
+             raise
+-        except Exception:
+-            raise RuntimeError("LINE database probe failed; diagnostic details suppressed") from None
++        except Exception as error:
++            raise _carry_key_reader_error(RuntimeError(
++                "LINE database probe failed; diagnostic details suppressed"), error) from None
+ 
+     raise RuntimeError(
+         "Found key candidates but none decrypted the database. "
+diff --git a/line_mcp_server.py b/line_mcp_server.py
+--- a/line_mcp_server.py
++++ b/line_mcp_server.py
+@@ -1,6 +1,7 @@
+ """Read-only LINE MCP with immutable local scope and bounded JSON responses.
+ 
+-Four tools expose untrusted chat data to the MCP host/model. No tool changes
++Four tools expose untrusted chat data; one locally bound tool returns schema
++aggregates only. No tool changes
+ permissions, resets budgets, writes summaries, or invokes LINE UI automation.
+ """
+ import glob
+@@ -11,7 +12,7 @@
+ import threading
+ import sys
+ import warnings
+-from contextlib import contextmanager
++from contextlib import asynccontextmanager, contextmanager
+ from datetime import datetime, timezone
+ from types import MappingProxyType
+ from pathlib import Path
+@@ -43,6 +44,7 @@
+ from db_reader import DbReader, _sane_limit
+ from key_extractor import extract_key
+ from safety import json_size
++from schema_mcp_adapter import SchemaResult, SchemaService
+ 
+ _MCP_LOG_DIRECTORY = Path(_MCP_PACKAGE_FILE).resolve().parent
+ _DISABLED_DIAGNOSTIC = "LINE access disabled. Configure settings.json locally, then restart the server."
+@@ -84,14 +86,40 @@
+ 
+     async def call_tool(self, name, arguments):
+         try:
++            if name == 'line_schema_counts':
++                if arguments is None:
++                    arguments = {}
++                elif type(arguments) is not dict or arguments:
++                    raise ValueError('schema tool accepts empty arguments only')
+             # Preserve FastMCP's original validation and ad-hoc conversions.
+-            return await super().call_tool(name, arguments)
++            result = await super().call_tool(name, arguments)
++            if (name == 'line_schema_counts' and isinstance(result, tuple) and len(result) == 2
++                    and type(result[1]) is dict and result[1].get('counts', 0) is None
++                    and result[1].get('successful') is False):
++                # MCP 1.29 converts TypedDict NotRequired to a default None,
++                # then dumps that default. Preserve the service's omission and
++                # require its original text to agree before output validation.
++                content, structured = result
++                projected = {key: value for key, value in structured.items() if key != 'counts'}
++                if len(content) != 1 or json.loads(content[0].text) != projected:
++                    raise ValueError('schema serialization mismatch')
++                result = content, projected
++            return result
+         except Exception as error:
+             cause = error.__cause__
+             disabled = (type(cause) is PermissionError and len(cause.args) == 1
+                         and type(cause.args[0]) is str and cause.args[0] == _DISABLED_DIAGNOSTIC)
+             raise ToolError(_DISABLED_DIAGNOSTIC if disabled else "LINE tool request failed") from None
+ 
++    async def list_tools(self):
++        tools = await super().list_tools()
++        for tool in tools:
++            if tool.name == 'line_schema_counts':
++                # SDK argument models can ignore extras; call_tool above is the
++                # runtime boundary, while this is the client's exact contract.
++                tool.inputSchema = {'type': 'object', 'properties': {}, 'additionalProperties': False}
++        return tools
++
+     async def get_prompt(self, name, arguments=None):
+         try:
+             return await super().get_prompt(name, arguments)
+@@ -105,12 +133,41 @@
+             raise ResourceError("LINE resource request failed") from None
+ 
+ 
+-mcp = _SafeCoreMCP("line-summary")
++_schema_service = SchemaService()
++
++
++@asynccontextmanager
++async def _schema_lifespan(app):
++    try:
++        yield {}
++    finally:
++        # EOF cancels request handlers first. They signal and join their exact
++        # worker in a shield; this also closes the idle/server-stop boundary.
++        await _schema_service.close()
++
++
++def configure_schema(settings_path, output_root):
++    """Trusted local bootstrap only; never exposed as an MCP tool or argument."""
++    _schema_service.configure(settings_path, output_root)
++
++
++mcp = _SafeCoreMCP("line-summary", lifespan=_schema_lifespan)
+ 
+ 
+ def _register_tool(function):
+     with _dependency_warning_boundary():
+         return mcp.tool()(function)
++
++
++@_register_tool
++async def line_schema_counts() -> SchemaResult:
++    """Count tables/views in the one locally bound source; no chat data or inputs.
++
++    Disabled until a trusted local creator binds this server's schema source.
++    Cancellation never certifies release; inspect the explicit cleanup flags.
++    """
++    return await _schema_service.execute()
++
+ _DEFAULTS = {
+     "enabled": False,
+     "db_path": "",
+@@ -164,10 +221,17 @@
+     return -(-microseconds // 1000)
+ 
+ 
+-def _load_settings(settings_path: str | None = None) -> dict:
++def _load_settings(settings_path: str | None = None, *, reject_duplicate_keys: bool = False) -> dict:
++    def unique_fields(pairs):
++        result = {}
++        for name, value in pairs:
++            if name in result:
++                raise ValueError("Ambiguous settings fields")
++            result[name] = value
++        return result
+     try:
+         with open(_SETTINGS_PATH if settings_path is None else settings_path, encoding="utf-8") as f:
+-            supplied = json.load(f)
++            supplied = json.load(f, object_pairs_hook=unique_fields if reject_duplicate_keys else None)
+     except FileNotFoundError:
+         supplied = {}
+     if not isinstance(supplied, dict) or set(supplied) - set(_DEFAULTS):
+diff --git a/line_process_identity.py b/line_process_identity.py
+--- a/line_process_identity.py
++++ b/line_process_identity.py
+@@ -8,10 +8,12 @@
+ from contextlib import ExitStack
+ import ctypes as c
+ from ctypes import wintypes
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ import ntpath
+ import struct
++import threading
+ import uuid
++from extraction_budget import ExtractionStopped
+ 
+ DWORD = c.c_uint32
+ BOOL = c.c_int32
+@@ -306,63 +308,167 @@
+     return Identity(actual_pid, created, _path(image.value))
+ 
+ 
+-@dataclass
++_NATIVE_ERROR_TYPES = frozenset({
++    "OSError", "TimeoutExpired", "SnapshotUnavailable", "WrongKeyError",
++    "ExtractionStopped", "KeyboardInterrupt", "SystemExit", "ValueError",
++    "RuntimeError", "UnexpectedError",
++})
++_NATIVE_CLEANUP_ERROR = "LINE process handle cleanup failed; diagnostic details suppressed"
++
++
++def _native_error_label(error, attribute="primary_error_type"):
++    label = getattr(error, attribute, None)
++    if label is None:
++        if attribute == "cleanup_error_type":
++            return None
++        label = type(error).__name__
++    return label if type(label) is str and label in _NATIVE_ERROR_TYPES else "UnexpectedError"
++
++
++def _preferred_failure(primary, cleanup):
++    if primary is None:
++        return cleanup
++    if not isinstance(primary, Exception):
++        return primary
++    if not isinstance(cleanup, Exception):
++        return cleanup
++    return primary if isinstance(primary, ExtractionStopped) else cleanup
++
++
++def _owned_native_error(error, owner, *, primary=None, cleanup=None, message=IDENTITY_ERROR):
++    primary_label = _native_error_label(primary if primary is not None else error)
++    cleanup_label = (
++        _native_error_label(cleanup, "cleanup_error_type") or _native_error_label(cleanup)
++        if cleanup is not None else _native_error_label(error, "cleanup_error_type")
++    )
++    outgoing = error if not isinstance(error, Exception) or isinstance(error, ExtractionStopped) else RuntimeError(message)
++    outgoing.worker = owner
++    outgoing.primary_error_type, outgoing.cleanup_error_type = primary_label, cleanup_label
++    return outgoing
++
++
++@dataclass(repr=False)
+ class VerifiedProcess:
+-    handle: int
+-    _resources: ExitStack
++    handle: int | None
++    _resources: list | ExitStack
++    _legacy_closed: bool = False
++    _cleanup_unknown: bool = False
++    _cleanup_lock: object = field(default_factory=threading.RLock, init=False, repr=False, compare=False)
++
++    def __repr__(self):
++        return "<VerifiedProcess: local handles only>"
++
++    @property
++    def _released(self):
++        if isinstance(self._resources, ExitStack):
++            return self._legacy_closed and not self._cleanup_unknown
++        return not self._resources
++
++    def release_evidence(self):
++        return {"native_handles_closed": self._released}
++
++    def retain(self, kernel, handle):
++        self._resources.append((kernel, handle))
+ 
+     def close(self):
+         try:
+-            self._resources.close()
+-        except Exception:
+-            raise RuntimeError("LINE process handle cleanup failed; diagnostic details suppressed") from None
++            with self._cleanup_lock:
++                self._close()
++        except BaseException as error:
++            raise _owned_native_error(error, self, cleanup=error, message=_NATIVE_CLEANUP_ERROR) from None
++
++    def _close(self):
++        if isinstance(self._resources, ExitStack):
++            # Legacy injected owners cannot recover callbacks popped by
++            # ExitStack. Keep their evidence unconfirmed after any failure.
++            try:
++                self._resources.close()
++            except BaseException as error:
++                self._cleanup_unknown = True
++                raise _owned_native_error(error, self, cleanup=error, message=_NATIVE_CLEANUP_ERROR) from None
++            if self._cleanup_unknown:
++                error = RuntimeError(_NATIVE_CLEANUP_ERROR)
++                raise _owned_native_error(error, self, cleanup=error, message=_NATIVE_CLEANUP_ERROR) from None
++            self._legacy_closed, self.handle = True, None
++            return
++        failure = None
++        # A failed CloseHandle remains owned. Attempt the other exact handles,
++        # then retry only pending entries on a later close/cancel call.
++        for index in range(len(self._resources) - 1, -1, -1):
++            kernel, handle = self._resources[index]
++            try:
++                _close_handle(kernel, handle)
++            except BaseException as error:
++                failure = _preferred_failure(failure, error)
++            else:
++                self._resources.pop(index)
++                if self.handle == handle:
++                    self.handle = None
++        if failure is not None:
++            raise _owned_native_error(failure, self, cleanup=failure, message=_NATIVE_CLEANUP_ERROR) from None
++
++    def cancel(self):
++        self.close()
++
++
++def close_verified_process(owner, error=None, *, message=IDENTITY_ERROR):
++    """Close the exact owner without masking a primary control-flow error."""
++    try:
++        owner.close()
++    except BaseException as cleanup:
++        outgoing = _preferred_failure(error, cleanup)
++        raise _owned_native_error(outgoing, owner,
++            primary=error if error is not None else cleanup, cleanup=cleanup, message=message) from None
++    if error is not None:
++        raise _owned_native_error(error, owner, message=message) from None
+ 
+ 
+ def _close_handle(kernel, handle):
+     # Win32 reports normal CloseHandle failure as BOOL FALSE, not a Python
+-    # exception. ExitStack still attempts the remaining callbacks if this fails.
++    # exception. The owner removes the handle only after this succeeds.
+     if not kernel.CloseHandle(handle):
+-        raise RuntimeError("LINE process handle cleanup failed; diagnostic details suppressed") from None
++        raise RuntimeError(_NATIVE_CLEANUP_ERROR) from None
+ 
+ 
+ def open_verified_line_process(kernel, pid):
+     """Retain anchor, locked image and scan handles until scanning completes."""
++    owner = VerifiedProcess(None, [])
+     try:
+         if type(pid) is not int or not 0 < pid <= 0xffffffff:
+             raise ValueError("invalid process id")
+-        with ExitStack() as resources:
+-            anchor = kernel.OpenProcess(QUERY_LIMITED, False, pid)
+-            if anchor in (None, 0, -1, INVALID_HANDLE):
+-                return None
+-            resources.callback(_close_handle, kernel, anchor)
+-            before = _identity(kernel, anchor, pid)
+-            # GENERIC_READ, FILE_SHARE_READ only, OPEN_EXISTING. Deny in-place
+-            # write/delete while checking the executable and scanning memory.
+-            image_file = kernel.CreateFileW(before.path, 0x80000000, 1, None, 3, 0, None)
+-            if image_file in (None, 0, -1, INVALID_HANDLE):
+-                raise ValueError("image could not be locked")
+-            resources.callback(_close_handle, kernel, image_file)
+-            final_path = c.create_unicode_buffer(32768)
+-            length = kernel.GetFinalPathNameByHandleW(image_file, final_path, len(final_path), 0)
+-            if not 0 < length < len(final_path) or length != _utf16_length(final_path.value):
+-                raise ValueError("image path unavailable")
+-            _path(final_path.value)
+-            # GetFinalPathNameByHandle returns the fully resolved target. It
+-            # may differ from the process name for a stable junction/symlink
+-            # or short-name alias; textual equality is not an identity proof.
+-            # Authenticate the retained file handle, and recheck the unchanged
+-            # process handles below. The pre-open mapped-image/path replacement
+-            # question remains a separate, unverified native boundary.
+-            _verify_publisher(image_file, before.path)
+-            _signed_product_from_handle(kernel, image_file)
+-            scan = kernel.OpenProcess(SCAN_RIGHTS, False, pid)
+-            if scan in (None, 0, -1, INVALID_HANDLE):
+-                raise ValueError("process unavailable")
+-            resources.callback(_close_handle, kernel, scan)
+-            # Recheck the retained anchor as well as the newly opened handle.
+-            # No PID-only reopening occurs after this point.
+-            if _identity(kernel, scan, pid) != before or _identity(kernel, anchor, pid) != before:
+-                raise ValueError("process identity changed")
+-            return VerifiedProcess(scan, resources.pop_all())
+-    except Exception:
+-        raise RuntimeError(IDENTITY_ERROR) from None
++        anchor = kernel.OpenProcess(QUERY_LIMITED, False, pid)
++        if anchor in (None, 0, -1, INVALID_HANDLE):
++            return None
++        owner.retain(kernel, anchor)
++        before = _identity(kernel, anchor, pid)
++        # GENERIC_READ, FILE_SHARE_READ only, OPEN_EXISTING. Deny in-place
++        # write/delete while checking the executable and scanning memory.
++        image_file = kernel.CreateFileW(before.path, 0x80000000, 1, None, 3, 0, None)
++        if image_file in (None, 0, -1, INVALID_HANDLE):
++            raise ValueError("image could not be locked")
++        owner.retain(kernel, image_file)
++        final_path = c.create_unicode_buffer(32768)
++        length = kernel.GetFinalPathNameByHandleW(image_file, final_path, len(final_path), 0)
++        if not 0 < length < len(final_path) or length != _utf16_length(final_path.value):
++            raise ValueError("image path unavailable")
++        _path(final_path.value)
++        # GetFinalPathNameByHandle returns the fully resolved target. It
++        # may differ from the process name for a stable junction/symlink
++        # or short-name alias; textual equality is not an identity proof.
++        # Authenticate the retained file handle, and recheck the unchanged
++        # process handles below. The pre-open mapped-image/path replacement
++        # question remains a separate, unverified native boundary.
++        _verify_publisher(image_file, before.path)
++        _signed_product_from_handle(kernel, image_file)
++        scan = kernel.OpenProcess(SCAN_RIGHTS, False, pid)
++        if scan in (None, 0, -1, INVALID_HANDLE):
++            raise ValueError("process unavailable")
++        owner.retain(kernel, scan)
++        owner.handle = scan
++        # Recheck the retained anchor as well as the newly opened handle.
++        # No PID-only reopening occurs after this point.
++        if _identity(kernel, scan, pid) != before or _identity(kernel, anchor, pid) != before:
++            raise ValueError("process identity changed")
++        return owner
++    except BaseException as error:
++        close_verified_process(owner, error)
+diff --git a/runner.py b/runner.py
+--- a/runner.py
++++ b/runner.py
+@@ -139,11 +139,21 @@
+ 
+ 
+ def run(case,directory,stage_budget=.15,overall_budget=5.0,cancel_after=None,
+-        spawn_delay=0.0,spawn_budget=2.0,cleanup_budget=1.5,entrypoint='synthetic'):
+-    if entrypoint not in ('synthetic','schema_synthetic'):raise ValueError('fixed entrypoint required')
++        spawn_delay=0.0,spawn_budget=2.0,cleanup_budget=1.5,entrypoint='synthetic',settings_path=None,cancel_event=None):
++    if cancel_event is not None and not isinstance(cancel_event,threading.Event):
++        raise ValueError('local cancellation event required')
++    if entrypoint not in ('synthetic','schema_synthetic','schema_configured'):raise ValueError('fixed entrypoint required')
++    start_payload=b'{"op":"start"}\n'
++    if entrypoint=='schema_configured':
++        from source_provider import explicit_local_file
++        if case!='success' or not explicit_local_file(settings_path):raise ValueError('explicit configured start required')
++        start_payload=(json.dumps({'op':'start','settings_path':settings_path},separators=(',',':'))+'\n').encode()
++        if len(start_payload)>4096:raise ValueError('bounded configured start required')
++    elif settings_path is not None:raise ValueError('settings require configured entry')
+     if case not in CASES:raise ValueError('synthetic case only')
+-    stages=('reader_open','sql') if entrypoint=='schema_synthetic' else STAGES
+-    output_budget=16*1024 if entrypoint=='schema_synthetic' else MAX_OUTPUT_BYTES
++    stages=(('source_prepare','reader_open','sql') if entrypoint=='schema_configured' else
++        ('reader_open','sql') if entrypoint=='schema_synthetic' else STAGES)
++    output_budget=16*1024 if entrypoint.startswith('schema_') else MAX_OUTPUT_BYTES
+     for value in (stage_budget,overall_budget,spawn_budget,cleanup_budget):
+         if not isinstance(value,(int,float)) or not math.isfinite(value) or value<=0:
+             raise ValueError('finite positive budget required')
+@@ -280,8 +290,17 @@
+ 
+     def control(p,start_allowed):
+         try:
++            condition=cancel_event._cond if cancel_event is not None else None
++            if condition is not None and not condition.acquire(timeout=max(0,overall_deadline-time.monotonic())):
++                start_allowed=False
++            else:
++                try:
++                    if cancel_event is not None and cancel_event.is_set():start_allowed=False
++                    if start_allowed:
++                        p.stdin.write(start_payload);p.stdin.flush();event('start_sent')
++                finally:
++                    if condition is not None:condition.release()
+             if start_allowed:
+-                p.stdin.write(b'{"op":"start"}\n');p.stdin.flush();event('start_sent')
+                 while not close_control.wait(.01):
+                     if send_cancel.is_set():break
+                 if send_cancel.is_set():
+@@ -316,7 +335,7 @@
+                 active_stage=stage;state['stage']=stage
+                 # Schema reader startup keeps its existing finite session budget;
+                 # a short SQL fault budget must not abort a legitimate cold open.
+-                duration=min(25,overall_budget) if entrypoint=='schema_synthetic' and stage=='reader_open' else stage_budget
++                duration=min(25,overall_budget) if entrypoint.startswith('schema_') and stage in ('source_prepare','reader_open') else stage_budget
+                 stage_deadline=min(overall_deadline,now+duration)
+                 event('stage_enter',stage=stage)
+         elif label=='stage_exit':
+@@ -498,10 +517,10 @@
+             # Engine/source entrypoints still require the complete venv.
+             interpreter=sys._base_executable if entrypoint=='synthetic' else sys.executable
+             flags=['-I','-S','-B'] if entrypoint=='synthetic' else ['-I','-B']
+-            argv=[interpreter,*flags,str(Path(__file__).with_name(
+-                'schema_child.py' if entrypoint=='schema_synthetic' else 'child.py')),
++            script={'synthetic':'child.py','schema_synthetic':'schema_child.py','schema_configured':'configured_child.py'}[entrypoint]
++            argv=[interpreter,*flags,str(Path(__file__).with_name(script)),
+                 '--case',case,'--resource',str(directory/'synthetic_resource.bin')]
+-            if entrypoint=='schema_synthetic':
++            if entrypoint.startswith('schema_'):
+                 argv.extend(['--run-id',run_id,'--deadline',str(overall_deadline)])
+             p=job.create(argv,
+                          stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+@@ -527,10 +546,11 @@
+         writer.start();event('spawn_entered');submit_receipt(False);worker.start()
+         spawn_deadline=min(overall_deadline,started+spawn_budget);spawn_expired=False
+         while process is None:
++            if cancel_event is not None and cancel_event.is_set():cancel.set()
+             try:process,job,failure=spawned.get(timeout=.01)
+             except queue.Empty:
+                 if time.monotonic()>=spawn_deadline or cancel.is_set():
+-                    state.update(status='deadline_exceeded',timeout_stage='spawn',deadline_kind='spawn')
++                    state.update(status='cancelled' if cancel.is_set() else 'deadline_exceeded',timeout_stage='spawn',deadline_kind='spawn')
+                     spawn_expired=True;begin_cleanup();break
+                 continue
+             if failure:
+@@ -556,6 +576,7 @@
+             if not allow_start:event('late_spawn_no_start')
+             while True:
+                 now=time.monotonic()
++                if cancel_event is not None and cancel_event.is_set():cancel.set()
+                 if cancel_after is not None and now-started>=cancel_after:cancel.set()
+                 if cancel.is_set() and state['status']=='running':
+                     state['status']='cancelled';event('interrupt_requested');begin_cleanup();send_cancel.set();close_control.set()
+@@ -609,7 +630,7 @@
+         if writer.ident is not None:
+             done=submit_receipt(True);done.wait(timeout=min(cleanup_budget,.5));publisher_stop.set();writer.join(timeout=.05)
+             if writer.is_alive():
+-                state['completion_receipt_written']=False;retain_owner();error('receipt_thread_unjoined')
++                retain_owner();error('receipt_thread_unjoined')
+         else:state['completion_receipt_written']=False
+     result=snapshot()
+     owner['initial_result']=json.loads(json.dumps(result))
+diff --git a/schema_entry.py b/schema_entry.py
+--- a/schema_entry.py
++++ b/schema_entry.py
+@@ -1,6 +1,6 @@
+ """Bounded local schema diagnostic entry. Current CLI enables synthetic sources only."""
+ from pathlib import Path
+-import hashlib,json
++import hashlib,json,math,threading
+ import runner
+ from schema_probe import validate_counts
+ MAX_ARTIFACT=16*1024
+@@ -23,13 +23,22 @@
+     if len(raw)>MAX_ARTIFACT:raise ValueError('artifact too large')
+     return raw
+ 
+-def validate_artifact(raw,run_id):
++def validate_artifact(raw,run_id,source_kind='synthetic'):
+     if len(raw)>MAX_ARTIFACT:raise ValueError('artifact too large')
+     value=json.loads(raw)
+-    if not isinstance(value,dict) or set(value)!={'run_id','counts','application_ack','release_evidence','source_bytes_unchanged'}:
++    required={'run_id','counts','application_ack','release_evidence'}
++    if source_kind=='synthetic':required.add('source_bytes_unchanged')
++    elif source_kind=='configured':required.update(('source_kind','key_preparation_cleanup_confirmed'))
++    else:raise ValueError('fixed artifact source required')
++    if not isinstance(value,dict) or set(value)!=required:
+         raise ValueError('artifact fields rejected')
+-    if value['run_id']!=run_id or value['application_ack'] is not True or value['source_bytes_unchanged'] is not True:
++    if value['run_id']!=run_id or value['application_ack'] is not True:
+         raise ValueError('artifact binding or cleanup rejected')
++    if source_kind=='synthetic' and value['source_bytes_unchanged'] is not True:
++        raise ValueError('synthetic source changed')
++    if source_kind=='configured' and (value['source_kind']!='configured'
++            or value['key_preparation_cleanup_confirmed'] is not True):
++        raise ValueError('configured source preparation unconfirmed')
+     evidence=value['release_evidence']
+     if not isinstance(evidence,dict) or set(evidence)!=RELEASE_KEYS or not all(v is True for v in evidence.values()):
+         raise ValueError('source release unconfirmed')
+@@ -45,7 +54,8 @@
+             and commit.get('completion_receipt_written') is True)
+     except (OSError,ValueError,TypeError):return False
+ 
+-def run(directory,case='success',*,overall=30,stage_budget=8,cleanup_budget=3,cancel_after=None,launch_context=None):
++def _run(directory,case='success',*,overall=30,stage_budget=8,cleanup_budget=3,cancel_after=None,
++         launch_context=None,source_kind='synthetic',settings_path=None,cancel_event=None):
+     # Exact Job policy is queried by the native creator on its retained handle.
+     # Child Job membership alone is not proof of which nested Job owns it.
+     if (not isinstance(launch_context,dict)
+@@ -59,9 +69,12 @@
+             or not _in_owned_job()):
+         raise ValueError('schema entry requires the dedicated bounded outer owner')
+     directory=Path(directory)
++    configured=source_kind=='configured'
++    private={'settings_path':settings_path} if configured else {}
++    if cancel_event is not None:private['cancel_event']=cancel_event
+     state=runner.run(case,directory,stage_budget=stage_budget,overall_budget=overall,
+                      cleanup_budget=cleanup_budget,spawn_budget=min(5,overall),
+-                     cancel_after=cancel_after,entrypoint='schema_synthetic')
++                     cancel_after=cancel_after,entrypoint='schema_configured' if configured else 'schema_synthetic',**private)
+     receipt_ok=valid_completion_receipt(directory,state['run_id'])
+     os_closed=all(state.get(key) is True for key in (
+         'process_exited','io_threads_joined','retained_handle_closed','owned_job_empty',
+@@ -70,6 +83,9 @@
+             'status':state['status'],'run_id':state['run_id'],'os_release_confirmed':os_closed,
+             'application_ack':state['cleanup_confirmed'] is True,
+             'completion_receipt_valid':receipt_ok,'runner':state,'LINE_read':False}
++    if configured:
++        result['adapter']='configured_source_real_readonly_worker'
++        result['LINE_read']=None  # The route alone does not attest whether the configured source was private.
+     if state['status']=='completed':
+         try:
+             if not receipt_ok or not os_closed or state['cleanup_confirmed'] is not True:
+@@ -79,11 +95,25 @@
+             if (commit.get('run_id')!=state['run_id']
+                     or commit.get('payload_sha256')!=hashlib.sha256(raw).hexdigest()):
+                 raise ValueError('schema commit rejected')
+-            result['counts']=validate_artifact(raw,state['run_id'])
++            result['counts']=validate_artifact(raw,state['run_id'],source_kind=source_kind)
+         except (OSError,ValueError,TypeError):
+             result['status']='output_or_receipt_rejected'
+     result['successful']=result['status']=='completed' and 'counts' in result
+     return result
++
++def run(directory,case='success',*,overall=30,stage_budget=8,cleanup_budget=3,cancel_after=None,launch_context=None):
++    return _run(directory,case,overall=overall,stage_budget=stage_budget,cleanup_budget=cleanup_budget,
++        cancel_after=cancel_after,launch_context=launch_context)
++
++def run_configured(directory,settings_path,*,overall=30,cleanup_budget=3,cancel_after=None,launch_context=None,cancel_event=None):
++    if cancel_event is not None and not isinstance(cancel_event,threading.Event):
++        raise ValueError('local cancellation event required')
++    for value,ceiling in ((overall,30),(cleanup_budget,3)):
++        if (isinstance(value,bool) or not isinstance(value,(int,float))
++                or not math.isfinite(value) or not 0<value<=ceiling):
++            raise ValueError('configured product budget exceeds its fixed bound')
++    return _run(directory,'success',overall=overall,cleanup_budget=cleanup_budget,cancel_after=cancel_after,
++        launch_context=launch_context,source_kind='configured',settings_path=settings_path,cancel_event=cancel_event)
+ 
+ if __name__=='__main__':
+     import argparse,sys
+diff --git a/schema_mcp_adapter.py b/schema_mcp_adapter.py
+new file mode 100644
+--- /dev/null
++++ b/schema_mcp_adapter.py
+@@ -0,0 +1,216 @@
++"""One locally bound aggregate. No remote source/configuration or chat data."""
++import threading
++import time
++from pathlib import Path
++import uuid
++import anyio
++from typing import Literal
++from typing_extensions import NotRequired, TypedDict
++from configured_entry_gate import _local_file
++
++STATUSES = frozenset({'completed','disabled','busy','cancelled','deadline_exceeded',
++    'cleanup_unconfirmed','failed','output_rejected','receipt_failed','spawn_error',
++    'output_limit','supervisor_error','output_or_receipt_rejected','protocol_error',
++    'spawn_cleanup_unconfirmed'})
++Status = Literal['completed','disabled','busy','cancelled','deadline_exceeded',
++    'cleanup_unconfirmed','failed','output_rejected','receipt_failed','spawn_error',
++    'output_limit','supervisor_error','output_or_receipt_rejected','protocol_error',
++    'spawn_cleanup_unconfirmed']
++
++class Counts(TypedDict):
++    table_count: int
++    view_count: int
++
++class SchemaResult(TypedDict):
++    status: Status
++    successful: bool
++    application_ack: bool
++    os_release_confirmed: bool
++    retry_required: bool
++    counts: NotRequired[Counts]
++
++def _failure(status, released=True):
++    return {'status':status,'successful':False,'application_ack':False,
++        'os_release_confirmed':released,'retry_required':not released}
++
++def _public(raw, cancelled):
++    flags=('successful','application_ack','os_release_confirmed','retry_required')
++    if (type(raw) is not dict or type(raw.get('status')) is not str
++            or raw['status'] not in STATUSES or raw['status'] in {'disabled','busy'}
++            or any(type(raw.get(name)) is not bool for name in flags)
++            or raw['retry_required'] is raw['os_release_confirmed']):
++        return _failure('output_rejected',False)
++    if cancelled:
++        return _failure('cancelled' if raw['os_release_confirmed'] else 'cleanup_unconfirmed',
++            raw['os_release_confirmed'])
++    if raw['successful']:
++        counts=raw.get('counts')
++        if (raw['status']!='completed' or not raw['application_ack']
++                or not raw['os_release_confirmed'] or raw['retry_required']
++                or raw.get('forced_termination') is not False
++                or raw.get('assigned_before_resume') is not True or raw.get('start_sent') is not True
++                or type(counts) is not dict or set(counts)!={'table_count','view_count'}
++                or any(type(value) is not int or not 0<=value<2**63 for value in counts.values())):
++            return _failure('output_rejected',raw['os_release_confirmed'])
++        return {name:raw[name] for name in ('status',*flags)}|{'counts':dict(counts)}
++    if (raw['status']=='completed' or 'counts' in raw
++            or ((raw.get('forced_termination') is True or raw['status']=='cleanup_unconfirmed')
++                and raw['application_ack'])):
++        return _failure('output_rejected',raw['os_release_confirmed'])
++    return {name:raw[name] for name in ('status',*flags)}
++
++class _Operation:
++    def __init__(self):
++        self.cancel=threading.Event()
++        self.done=threading.Event()
++        self.thread=None
++        self.raw=None
++        self.directory=None
++        self.owner=None
++        self.error=None
++        self.primary_error=None
++        self.start_error=None
++        self.cleanup_error=None
++
++class SchemaService:
++    def __init__(self, *, launcher=None):
++        self._launch=launcher
++        self._lock=threading.RLock()
++        self._binding=None
++        self._operation=None
++        self._stopping=False
++        self._last=_failure('disabled')
++        self._cancel_signalled=False
++        self._recovered=False
++
++    def configure(self, settings_path, output_root):
++        # Pure lexical validation: no settings read or output acquisition here.
++        root=str(output_root)
++        if (not _local_file(settings_path) or not _local_file(root)
++                or len(settings_path.encode('utf-8'))>3000):
++            raise ValueError('explicit bounded local schema binding required')
++        with self._lock:
++            if self._binding is not None or self._operation is not None or self._stopping:
++                raise ValueError('schema binding is fixed for this server')
++            self._binding=(settings_path,root)
++
++    def _worker(self, operation, binding):
++        try:
++            if operation.cancel.is_set():
++                operation.raw=_failure('cancelled')
++            else:
++                settings,root=binding
++                Path(root).mkdir(parents=True,exist_ok=True)
++                launch=self._launch
++                if launch is None:
++                    from configured_launcher import run
++                    launch=run
++                operation.directory=Path(root)/('schema_'+uuid.uuid4().hex)
++                operation.raw=launch(operation.directory,settings,
++                    cancel_event=operation.cancel)
++        except BaseException as error:
++            # A failed native owner may still be retained by the launcher.
++            # Do not infer release from the exception or expose its arguments.
++            operation.raw=_failure('failed',False)
++            operation.error=error
++        finally:
++            self._associate_owner(operation)
++            binding=None
++            operation.done.set()
++
++    def _associate_owner(self, operation):
++        # Retain the actual launcher object, not a PID, inferred token or path.
++        # Later exact local recovery may retire it without mutating this result.
++        try:
++            import configured_launcher as launcher
++            owner=getattr(operation.error,'launcher_owner',None)
++            if owner is None and type(operation.raw) is dict:
++                token=operation.raw.get('outer_run_id')
++                if type(token) is str:
++                    with launcher._REGISTRY_LOCK:owner=launcher.RETAINED.get(token)
++            if (isinstance(owner,launcher._Owner)
++                    and owner.directory==operation.directory):operation.owner=owner
++        except BaseException:
++            pass  # An unproved association cannot certify cleanup.
++
++    def _finished(self, operation):
++        return operation.done.is_set() and (operation.thread is None or not operation.thread.is_alive())
++
++    def _collect(self, operation):
++        if not self._finished(operation):return None
++        if operation.thread is not None:operation.thread.join(timeout=0)
++        result=_public(operation.raw,operation.cancel.is_set())
++        self._last=result
++        self._cancel_signalled=self._cancel_signalled or operation.cancel.is_set()
++        recovered=(operation.owner is not None and operation.owner.cleaned is True)
++        if recovered and not result['os_release_confirmed']:self._recovered=True
++        if (result['os_release_confirmed'] or recovered) and self._operation is operation:
++            self._operation=None
++        return result
++
++    async def _wait_cleanup(self, operation):
++        # This joins only the already registered exact worker. It never renews
++        # the launcher's own work/cleanup deadlines or replaces its owner.
++        deadline=time.monotonic()+3.05
++        with anyio.CancelScope(shield=True):
++            while not self._finished(operation) and time.monotonic()<deadline:
++                await anyio.sleep(.005)
++        with self._lock:
++            result=self._collect(operation)
++            if result is None:self._last=_failure('cleanup_unconfirmed',False)
++            return result
++
++    async def execute(self) -> SchemaResult:
++        with self._lock:
++            if self._operation is not None:self._collect(self._operation)
++            if self._operation is not None:return _failure('busy')
++            if self._stopping or self._binding is None:return _failure('disabled')
++            operation=_Operation()
++            self._operation=operation  # Registration precedes fallible start.
++            operation.thread=threading.Thread(target=self._worker,args=(operation,self._binding),
++                name='schema-mcp-owned-call',daemon=True)
++            try:operation.thread.start()
++            except BaseException as error:
++                # Thread.start may be interrupted after native creation. Keep
++                # this exact object and wait; absence of done is not release.
++                operation.start_error=error
++                operation.cancel.set()
++        try:
++            if operation.start_error is not None:
++                result=await self._wait_cleanup(operation)
++                return _failure('supervisor_error',True) if result is not None and result['os_release_confirmed'] else _failure('cleanup_unconfirmed',False)
++            while not self._finished(operation):await anyio.sleep(.005)
++        except BaseException as primary:
++            operation.primary_error=primary
++            try:
++                operation.cancel.set()
++                await self._wait_cleanup(operation)
++            except BaseException as cleanup_error:
++                operation.cleanup_error=cleanup_error
++            raise
++        with self._lock:
++            return self._collect(operation)
++
++    async def close(self):
++        with self._lock:
++            self._stopping=True
++            operation=self._operation
++            if operation is not None:operation.cancel.set()
++        if operation is not None:await self._wait_cleanup(operation)
++        with self._lock:
++            self._binding=None
++            return self._operation is None
++
++    def observation(self):
++        with self._lock:
++            operation=self._operation
++            if operation is not None:self._collect(operation)
++            operation=self._operation
++            return {'configured':self._binding is not None,'stopping':self._stopping,
++                'active_operations':int(operation is not None and not self._finished(operation)),
++                'pending_cleanup':operation is not None,
++                'last_status':self._last['status'],
++                'last_application_ack':self._last['application_ack'],
++                'last_os_release_confirmed':self._last['os_release_confirmed'],
++                'recovery_release_confirmed':self._recovered,
++                'cancel_signalled':self._cancel_signalled or (operation is not None and operation.cancel.is_set())}
+diff --git a/source_provider.py b/source_provider.py
+--- a/source_provider.py
++++ b/source_provider.py
+@@ -4,12 +4,22 @@
+ or automatic retry. Call only inside the protected schema worker.
+ """
+ from dataclasses import dataclass
+-from pathlib import Path
+ import re,time
++from configured_child import explicit_local_file
+ from extraction_budget import ExtractionStopped
+ 
+ class SourcePolicyDenied(PermissionError):pass
+ class SourcePreparationError(RuntimeError):pass
++
++_ERROR_KINDS={'ExtractionStopped','SnapshotUnavailable','WrongKeyError','OSError',
++    'ValueError','RuntimeError','KeyboardInterrupt','SystemExit','DbAccessError',
++    'SourcePolicyDenied','SourcePreparationError','UnexpectedError','TimeoutExpired'}
++
++def _label(value):
++    return value if type(value) is str and value in _ERROR_KINDS else 'UnexpectedError'
++
++def _kind(error):
++    return _label(type(error).__name__)
+ 
+ @dataclass(repr=False)
+ class PrivateSource:
+@@ -18,8 +28,10 @@
+     def __repr__(self):return '<PrivateSource: local memory only>'
+ 
+ def _settings(path):
++    if not explicit_local_file(path):
++        raise SourcePolicyDenied('one explicit local settings file is required')
+     from line_mcp_server import _load_settings
+-    return _load_settings(path)
++    return _load_settings(path,reject_duplicate_keys=True)
+ 
+ def _key(path,**kwargs):
+     from key_extractor import extract_key
+@@ -29,11 +41,50 @@
+     def __init__(self,settings_loader=None,key_loader=None):
+         self.settings_loader=_settings if settings_loader is None else settings_loader
+         self.key_loader=_key if key_loader is None else key_loader
++        self.retained_worker=None
++        self._prepare_called=False
+         self.state={'phase':'not_started','single_explicit_source':False,'key_preparation_started':False,
+                     'private_source_work_started':False,'key_ready':False,
+-                    'key_loader_kind':'normal' if key_loader is None else 'injected_synthetic'}
++                    'key_loader_kind':'normal' if key_loader is None else 'injected_synthetic',
++                    'preparation_release_confirmed':True}
++
++    def _failure(self,error):
++        owner=getattr(error,'worker',None)
++        if owner is None:owner=self.retained_worker
++        if owner is not None:self.retained_worker=owner
++        self.state['preparation_release_confirmed']=False
++        self.state['error_kind']=_kind(error)
++        outgoing=error if isinstance(error,(ExtractionStopped,KeyboardInterrupt,SystemExit)) else SourcePreparationError('local key preparation failed')
++        if owner is not None:outgoing.worker=owner
++        primary=getattr(error,'primary_error_type',None)
++        cleanup=getattr(error,'cleanup_error_type',None)
++        outgoing.primary_error_type=_kind(error) if primary is None else _label(primary)
++        outgoing.cleanup_error_type=None if cleanup is None else _label(cleanup)
++        return outgoing
++
++    def close(self):
++        if self.retained_worker is not None:
++            from schema_probe import release_evidence
++            from line_process_identity import VerifiedProcess
++            try:self.retained_worker.close()
++            except BaseException as error:raise self._failure(error) from None
++            if isinstance(self.retained_worker,VerifiedProcess):
++                evidence=self.retained_worker.release_evidence()
++                clean=(type(evidence) is dict and set(evidence)=={'native_handles_closed'}
++                    and evidence['native_handles_closed'] is True)
++            else:clean=all(release_evidence(self.retained_worker).values())
++            self.state['preparation_release_confirmed']=clean
++        return self.state['preparation_release_confirmed']
++
++    def cancel(self):
++        if self.retained_worker is not None:
++            try:self.retained_worker.cancel()
++            except BaseException as error:raise self._failure(error) from None
+ 
+     def prepare(self,settings_path,budget):
++        if self._prepare_called:
++            raise self._failure(SourcePreparationError('source preparation is single use'))
++        self._prepare_called=True
+         budget.check('preflight')
+         self.state['phase']='configuration'
+         try:policy=self.settings_loader(settings_path)
+@@ -43,21 +94,20 @@
+         if not isinstance(policy,dict) or policy.get('enabled') is not True:
+             raise SourcePolicyDenied('local source policy disabled')
+         path=policy.get('db_path')
+-        if (not isinstance(path,str) or not path or not Path(path).is_absolute()
+-                or Path(path).suffix.casefold()!='.edb'):
++        if not explicit_local_file(path,'.edb'):
+             raise SourcePolicyDenied('one explicit local database is required')
+         self.state['single_explicit_source']=True
+         budget.check('preflight')
+         self.state['phase']='key_preparation'
+         self.state['key_preparation_started']=True
++        self.state['preparation_release_confirmed']=False
+         self.state['private_source_work_started']=self.state['key_loader_kind']=='normal'
+         try:
+             key=self.key_loader(path,require_consent=False,
+                 timeout=min(90.0,max(0,budget.deadline-time.monotonic())),cancelled=budget.cancelled)
+-        except ExtractionStopped:raise
+-        except Exception:raise SourcePreparationError('local key preparation failed') from None
++        except BaseException as error:raise self._failure(error) from None
+         budget.check('candidate_probe')  # A late native key must never become success.
+         if not isinstance(key,str) or re.fullmatch(r'[0-9a-fA-F]{32}(?:[0-9a-fA-F]{32})?',key) is None:
+             raise SourcePreparationError('supported verified key unavailable')
+-        self.state.update(phase='ready',key_ready=True)
++        self.state.update(phase='ready',key_ready=True,preparation_release_confirmed=True)
+         return PrivateSource(path,key)

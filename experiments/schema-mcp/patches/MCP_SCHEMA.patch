@@ -1,0 +1,609 @@
+diff --git a/configured_entry_gate.py b/configured_entry_gate.py
+--- a/configured_entry_gate.py
++++ b/configured_entry_gate.py
+@@ -4,6 +4,7 @@
+ import os
+ from pathlib import Path
+ import sys
++import threading
+ import time
+ 
+ MAX_START = 4096
+@@ -93,6 +94,23 @@
+     return None
+ 
+ 
++def _watch_control(stream, cancelled, finished):
++    try:
++        descriptor = stream.fileno()
++    except (AttributeError, OSError):
++        return  # In-memory streams used by pure contract tests have no OS pipe.
++    def watch():
++        try:
++            os.read(descriptor, 1)  # Private pipe: any trailing input or EOF cancels.
++        except OSError:
++            pass
++        if not finished.is_set():
++            cancelled.set()
++    # Raw os.read holds no buffered-stdin lock at interpreter shutdown. The
++    # exact gate process owns this pipe; normal completion may exit with it idle.
++    threading.Thread(target=watch, name='configured-private-control', daemon=True).start()
++
++
+ def _execute(stream, directory, site_packages):
+     start = _read_start(stream)
+     # Close the inherited query-only Job handle before any provider work.
+@@ -103,8 +121,13 @@
+     entry = _load_entry(site_packages)
+     context = {'outer_run_id': start['outer_run_id'], 'assigned_before_start': True,
+                'active_process_limit': 8}
+-    result = entry.run_configured(Path(directory) / 'entry', start['settings_path'],
+-                                  overall=remaining, cleanup_budget=3, launch_context=context)
++    cancelled, finished = threading.Event(), threading.Event()
++    _watch_control(stream, cancelled, finished)
++    try:
++        result = entry.run_configured(Path(directory) / 'entry', start['settings_path'],
++            overall=remaining, cleanup_budget=3, launch_context=context, cancel_event=cancelled)
++    finally:
++        finished.set()
+     required = {'status', 'successful', *PROOF_FIELDS}
+     known = required | {'counts', 'scope', 'adapter', 'run_id', 'runner', 'LINE_read'}
+     if not isinstance(result, dict) or not required <= set(result) <= known:
+diff --git a/configured_launcher.py b/configured_launcher.py
+--- a/configured_launcher.py
++++ b/configured_launcher.py
+@@ -37,7 +37,7 @@
+ 
+ 
+ class _Owner:
+-    def __init__(self, directory, settings_path):
++    def __init__(self, directory, settings_path, cancel_event=None):
+         self.directory = Path(directory)
+         self.token = uuid.uuid4().hex
+         self.started = time.monotonic()
+@@ -45,6 +45,7 @@
+         self.cleanup_deadline = None
+         self._cooperative_deadline = None
+         self._settings = settings_path
++        self.cancel_event = cancel_event
+         self.backend = self.job = self.child = None
+         self.assigned = self.start_sent = self.forced = False
+         self.spawn_done = threading.Event()
+@@ -74,10 +75,17 @@
+         self.child = child
+ 
+     def _allowed(self):
+-        return not self.stop.is_set() and time.monotonic() < self.work_deadline
++        return (not self.stop.is_set() and not self._cancelled()
++                and time.monotonic() < self.work_deadline)
++
++    def _cancelled(self):
++        event = getattr(self, 'cancel_event', None)
++        return event is not None and event.is_set()
+ 
+     def _spawn(self):
+         try:
++            if not self._allowed():
++                return
+             self.backend = _backend()
+             self.job = self.backend.new_job(self._register_job)
+             self.job.configure()
+@@ -111,10 +119,21 @@
+                 'job_handle': inherited}, separators=(',', ':')) + '\n').encode()
+             if len(payload) > 4096:
+                 raise ValueError('bounded configured launch required')
+-            self.child.stdin.write(payload)
+-            self.child.stdin.flush()
+-            self.start_sent = True
+-            self.status = 'running'
++            # CPython Event.set uses this same condition. Serialize cancellation
++            # with the private start commit, instead of a check/write race.
++            condition = self.cancel_event._cond if self.cancel_event is not None else None
++            if condition is not None and not condition.acquire(timeout=max(0, self.work_deadline-time.monotonic())):
++                self.status = 'deadline_exceeded'
++                return
++            try:
++                if not self._allowed():
++                    return
++                self.child.stdin.write(payload)
++                self.child.stdin.flush()
++                self.start_sent = True
++                self.status = 'running'
++            finally:
++                if condition is not None:condition.release()
+         except BaseException as error:
+             self.status = 'spawn_error'
+             self.error('spawn', error)
+@@ -148,6 +167,9 @@
+             self.pump()
+             if self.stop.is_set():
+                 return
++            if self._cancelled():
++                self.status = 'cancelled'
++                return
+             if self.spawn_done.is_set():
+                 if self.child is None or self.status == 'spawn_error':
+                     return
+@@ -161,6 +183,8 @@
+                     # An output rejection keeps its already recorded cause.
+                     if not self.stop.is_set() and time.monotonic() >= self.work_deadline:
+                         self.status = 'deadline_exceeded'
++                    if self._cancelled():
++                        self.status = 'cancelled'
+                     return
+             time.sleep(0.005)
+ 
+@@ -243,6 +267,8 @@
+             self.cleanup_lock.release()
+ 
+     def public(self):
++        if self._cancelled() and self.status in {'starting', 'running'}:
++            self.status = 'cancelled'
+         result = {'outer_run_id': self.token, 'adapter': 'configured_local_launcher',
+                   'status': self.status, 'successful': False, 'application_ack': False,
+                   'os_release_confirmed': self.cleaned, 'retry_required': not self.cleaned,
+@@ -273,8 +299,10 @@
+         return result
+ 
+ 
+-def run(directory, settings_path):
++def run(directory, settings_path, *, cancel_event=None):
+     """Run the one configured schema aggregate under a newly created exact Job."""
++    if cancel_event is not None and not isinstance(cancel_event, threading.Event):
++        raise ValueError('local cancellation event required')
+     if not _local_file(settings_path):
+         raise ValueError('explicit local settings required')
+     # Reserve frame metadata inside the same 4096-byte private input limit.
+@@ -286,7 +314,7 @@
+     if not _local_file(str(directory)):
+         raise ValueError('explicit local output required')
+     directory.mkdir(parents=True, exist_ok=False)
+-    owner = _Owner(directory, settings_path)
++    owner = _Owner(directory, settings_path, cancel_event)
+     thread = threading.Thread(target=owner._spawn, name='configured-owned-spawn', daemon=True)
+     try:
+         thread.start()
+diff --git a/line_mcp_server.py b/line_mcp_server.py
+--- a/line_mcp_server.py
++++ b/line_mcp_server.py
+@@ -1,6 +1,7 @@
+ """Read-only LINE MCP with immutable local scope and bounded JSON responses.
+ 
+-Four tools expose untrusted chat data to the MCP host/model. No tool changes
++Four tools expose untrusted chat data; one locally bound tool returns schema
++aggregates only. No tool changes
+ permissions, resets budgets, writes summaries, or invokes LINE UI automation.
+ """
+ import glob
+@@ -11,7 +12,7 @@
+ import threading
+ import sys
+ import warnings
+-from contextlib import contextmanager
++from contextlib import asynccontextmanager, contextmanager
+ from datetime import datetime, timezone
+ from types import MappingProxyType
+ from pathlib import Path
+@@ -43,6 +44,7 @@
+ from db_reader import DbReader, _sane_limit
+ from key_extractor import extract_key
+ from safety import json_size
++from schema_mcp_adapter import SchemaResult, SchemaService
+ 
+ _MCP_LOG_DIRECTORY = Path(_MCP_PACKAGE_FILE).resolve().parent
+ _DISABLED_DIAGNOSTIC = "LINE access disabled. Configure settings.json locally, then restart the server."
+@@ -84,14 +86,40 @@
+ 
+     async def call_tool(self, name, arguments):
+         try:
++            if name == 'line_schema_counts':
++                if arguments is None:
++                    arguments = {}
++                elif type(arguments) is not dict or arguments:
++                    raise ValueError('schema tool accepts empty arguments only')
+             # Preserve FastMCP's original validation and ad-hoc conversions.
+-            return await super().call_tool(name, arguments)
++            result = await super().call_tool(name, arguments)
++            if (name == 'line_schema_counts' and isinstance(result, tuple) and len(result) == 2
++                    and type(result[1]) is dict and result[1].get('counts', 0) is None
++                    and result[1].get('successful') is False):
++                # MCP 1.29 converts TypedDict NotRequired to a default None,
++                # then dumps that default. Preserve the service's omission and
++                # require its original text to agree before output validation.
++                content, structured = result
++                projected = {key: value for key, value in structured.items() if key != 'counts'}
++                if len(content) != 1 or json.loads(content[0].text) != projected:
++                    raise ValueError('schema serialization mismatch')
++                result = content, projected
++            return result
+         except Exception as error:
+             cause = error.__cause__
+             disabled = (type(cause) is PermissionError and len(cause.args) == 1
+                         and type(cause.args[0]) is str and cause.args[0] == _DISABLED_DIAGNOSTIC)
+             raise ToolError(_DISABLED_DIAGNOSTIC if disabled else "LINE tool request failed") from None
+ 
++    async def list_tools(self):
++        tools = await super().list_tools()
++        for tool in tools:
++            if tool.name == 'line_schema_counts':
++                # SDK argument models can ignore extras; call_tool above is the
++                # runtime boundary, while this is the client's exact contract.
++                tool.inputSchema = {'type': 'object', 'properties': {}, 'additionalProperties': False}
++        return tools
++
+     async def get_prompt(self, name, arguments=None):
+         try:
+             return await super().get_prompt(name, arguments)
+@@ -105,12 +133,41 @@
+             raise ResourceError("LINE resource request failed") from None
+ 
+ 
+-mcp = _SafeCoreMCP("line-summary")
++_schema_service = SchemaService()
++
++
++@asynccontextmanager
++async def _schema_lifespan(app):
++    try:
++        yield {}
++    finally:
++        # EOF cancels request handlers first. They signal and join their exact
++        # worker in a shield; this also closes the idle/server-stop boundary.
++        await _schema_service.close()
++
++
++def configure_schema(settings_path, output_root):
++    """Trusted local bootstrap only; never exposed as an MCP tool or argument."""
++    _schema_service.configure(settings_path, output_root)
++
++
++mcp = _SafeCoreMCP("line-summary", lifespan=_schema_lifespan)
+ 
+ 
+ def _register_tool(function):
+     with _dependency_warning_boundary():
+         return mcp.tool()(function)
++
++
++@_register_tool
++async def line_schema_counts() -> SchemaResult:
++    """Count tables/views in the one locally bound source; no chat data or inputs.
++
++    Disabled until a trusted local creator binds this server's schema source.
++    Cancellation never certifies release; inspect the explicit cleanup flags.
++    """
++    return await _schema_service.execute()
++
+ _DEFAULTS = {
+     "enabled": False,
+     "db_path": "",
+diff --git a/runner.py b/runner.py
+--- a/runner.py
++++ b/runner.py
+@@ -139,7 +139,9 @@
+ 
+ 
+ def run(case,directory,stage_budget=.15,overall_budget=5.0,cancel_after=None,
+-        spawn_delay=0.0,spawn_budget=2.0,cleanup_budget=1.5,entrypoint='synthetic',settings_path=None):
++        spawn_delay=0.0,spawn_budget=2.0,cleanup_budget=1.5,entrypoint='synthetic',settings_path=None,cancel_event=None):
++    if cancel_event is not None and not isinstance(cancel_event,threading.Event):
++        raise ValueError('local cancellation event required')
+     if entrypoint not in ('synthetic','schema_synthetic','schema_configured'):raise ValueError('fixed entrypoint required')
+     start_payload=b'{"op":"start"}\n'
+     if entrypoint=='schema_configured':
+@@ -288,8 +290,17 @@
+ 
+     def control(p,start_allowed):
+         try:
++            condition=cancel_event._cond if cancel_event is not None else None
++            if condition is not None and not condition.acquire(timeout=max(0,overall_deadline-time.monotonic())):
++                start_allowed=False
++            else:
++                try:
++                    if cancel_event is not None and cancel_event.is_set():start_allowed=False
++                    if start_allowed:
++                        p.stdin.write(start_payload);p.stdin.flush();event('start_sent')
++                finally:
++                    if condition is not None:condition.release()
+             if start_allowed:
+-                p.stdin.write(start_payload);p.stdin.flush();event('start_sent')
+                 while not close_control.wait(.01):
+                     if send_cancel.is_set():break
+                 if send_cancel.is_set():
+@@ -535,10 +546,11 @@
+         writer.start();event('spawn_entered');submit_receipt(False);worker.start()
+         spawn_deadline=min(overall_deadline,started+spawn_budget);spawn_expired=False
+         while process is None:
++            if cancel_event is not None and cancel_event.is_set():cancel.set()
+             try:process,job,failure=spawned.get(timeout=.01)
+             except queue.Empty:
+                 if time.monotonic()>=spawn_deadline or cancel.is_set():
+-                    state.update(status='deadline_exceeded',timeout_stage='spawn',deadline_kind='spawn')
++                    state.update(status='cancelled' if cancel.is_set() else 'deadline_exceeded',timeout_stage='spawn',deadline_kind='spawn')
+                     spawn_expired=True;begin_cleanup();break
+                 continue
+             if failure:
+@@ -564,6 +576,7 @@
+             if not allow_start:event('late_spawn_no_start')
+             while True:
+                 now=time.monotonic()
++                if cancel_event is not None and cancel_event.is_set():cancel.set()
+                 if cancel_after is not None and now-started>=cancel_after:cancel.set()
+                 if cancel.is_set() and state['status']=='running':
+                     state['status']='cancelled';event('interrupt_requested');begin_cleanup();send_cancel.set();close_control.set()
+@@ -617,7 +630,7 @@
+         if writer.ident is not None:
+             done=submit_receipt(True);done.wait(timeout=min(cleanup_budget,.5));publisher_stop.set();writer.join(timeout=.05)
+             if writer.is_alive():
+-                state['completion_receipt_written']=False;retain_owner();error('receipt_thread_unjoined')
++                retain_owner();error('receipt_thread_unjoined')
+         else:state['completion_receipt_written']=False
+     result=snapshot()
+     owner['initial_result']=json.loads(json.dumps(result))
+diff --git a/schema_entry.py b/schema_entry.py
+--- a/schema_entry.py
++++ b/schema_entry.py
+@@ -1,6 +1,6 @@
+ """Bounded local schema diagnostic entry. Current CLI enables synthetic sources only."""
+ from pathlib import Path
+-import hashlib,json,math
++import hashlib,json,math,threading
+ import runner
+ from schema_probe import validate_counts
+ MAX_ARTIFACT=16*1024
+@@ -55,7 +55,7 @@
+     except (OSError,ValueError,TypeError):return False
+ 
+ def _run(directory,case='success',*,overall=30,stage_budget=8,cleanup_budget=3,cancel_after=None,
+-         launch_context=None,source_kind='synthetic',settings_path=None):
++         launch_context=None,source_kind='synthetic',settings_path=None,cancel_event=None):
+     # Exact Job policy is queried by the native creator on its retained handle.
+     # Child Job membership alone is not proof of which nested Job owns it.
+     if (not isinstance(launch_context,dict)
+@@ -71,6 +71,7 @@
+     directory=Path(directory)
+     configured=source_kind=='configured'
+     private={'settings_path':settings_path} if configured else {}
++    if cancel_event is not None:private['cancel_event']=cancel_event
+     state=runner.run(case,directory,stage_budget=stage_budget,overall_budget=overall,
+                      cleanup_budget=cleanup_budget,spawn_budget=min(5,overall),
+                      cancel_after=cancel_after,entrypoint='schema_configured' if configured else 'schema_synthetic',**private)
+@@ -104,13 +105,15 @@
+     return _run(directory,case,overall=overall,stage_budget=stage_budget,cleanup_budget=cleanup_budget,
+         cancel_after=cancel_after,launch_context=launch_context)
+ 
+-def run_configured(directory,settings_path,*,overall=30,cleanup_budget=3,cancel_after=None,launch_context=None):
++def run_configured(directory,settings_path,*,overall=30,cleanup_budget=3,cancel_after=None,launch_context=None,cancel_event=None):
++    if cancel_event is not None and not isinstance(cancel_event,threading.Event):
++        raise ValueError('local cancellation event required')
+     for value,ceiling in ((overall,30),(cleanup_budget,3)):
+         if (isinstance(value,bool) or not isinstance(value,(int,float))
+                 or not math.isfinite(value) or not 0<value<=ceiling):
+             raise ValueError('configured product budget exceeds its fixed bound')
+     return _run(directory,'success',overall=overall,cleanup_budget=cleanup_budget,cancel_after=cancel_after,
+-        launch_context=launch_context,source_kind='configured',settings_path=settings_path)
++        launch_context=launch_context,source_kind='configured',settings_path=settings_path,cancel_event=cancel_event)
+ 
+ if __name__=='__main__':
+     import argparse,sys
+diff --git a/schema_mcp_adapter.py b/schema_mcp_adapter.py
+new file mode 100644
+--- /dev/null
++++ b/schema_mcp_adapter.py
+@@ -0,0 +1,216 @@
++"""One locally bound aggregate. No remote source/configuration or chat data."""
++import threading
++import time
++from pathlib import Path
++import uuid
++import anyio
++from typing import Literal
++from typing_extensions import NotRequired, TypedDict
++from configured_entry_gate import _local_file
++
++STATUSES = frozenset({'completed','disabled','busy','cancelled','deadline_exceeded',
++    'cleanup_unconfirmed','failed','output_rejected','receipt_failed','spawn_error',
++    'output_limit','supervisor_error','output_or_receipt_rejected','protocol_error',
++    'spawn_cleanup_unconfirmed'})
++Status = Literal['completed','disabled','busy','cancelled','deadline_exceeded',
++    'cleanup_unconfirmed','failed','output_rejected','receipt_failed','spawn_error',
++    'output_limit','supervisor_error','output_or_receipt_rejected','protocol_error',
++    'spawn_cleanup_unconfirmed']
++
++class Counts(TypedDict):
++    table_count: int
++    view_count: int
++
++class SchemaResult(TypedDict):
++    status: Status
++    successful: bool
++    application_ack: bool
++    os_release_confirmed: bool
++    retry_required: bool
++    counts: NotRequired[Counts]
++
++def _failure(status, released=True):
++    return {'status':status,'successful':False,'application_ack':False,
++        'os_release_confirmed':released,'retry_required':not released}
++
++def _public(raw, cancelled):
++    flags=('successful','application_ack','os_release_confirmed','retry_required')
++    if (type(raw) is not dict or type(raw.get('status')) is not str
++            or raw['status'] not in STATUSES or raw['status'] in {'disabled','busy'}
++            or any(type(raw.get(name)) is not bool for name in flags)
++            or raw['retry_required'] is raw['os_release_confirmed']):
++        return _failure('output_rejected',False)
++    if cancelled:
++        return _failure('cancelled' if raw['os_release_confirmed'] else 'cleanup_unconfirmed',
++            raw['os_release_confirmed'])
++    if raw['successful']:
++        counts=raw.get('counts')
++        if (raw['status']!='completed' or not raw['application_ack']
++                or not raw['os_release_confirmed'] or raw['retry_required']
++                or raw.get('forced_termination') is not False
++                or raw.get('assigned_before_resume') is not True or raw.get('start_sent') is not True
++                or type(counts) is not dict or set(counts)!={'table_count','view_count'}
++                or any(type(value) is not int or not 0<=value<2**63 for value in counts.values())):
++            return _failure('output_rejected',raw['os_release_confirmed'])
++        return {name:raw[name] for name in ('status',*flags)}|{'counts':dict(counts)}
++    if (raw['status']=='completed' or 'counts' in raw
++            or ((raw.get('forced_termination') is True or raw['status']=='cleanup_unconfirmed')
++                and raw['application_ack'])):
++        return _failure('output_rejected',raw['os_release_confirmed'])
++    return {name:raw[name] for name in ('status',*flags)}
++
++class _Operation:
++    def __init__(self):
++        self.cancel=threading.Event()
++        self.done=threading.Event()
++        self.thread=None
++        self.raw=None
++        self.directory=None
++        self.owner=None
++        self.error=None
++        self.primary_error=None
++        self.start_error=None
++        self.cleanup_error=None
++
++class SchemaService:
++    def __init__(self, *, launcher=None):
++        self._launch=launcher
++        self._lock=threading.RLock()
++        self._binding=None
++        self._operation=None
++        self._stopping=False
++        self._last=_failure('disabled')
++        self._cancel_signalled=False
++        self._recovered=False
++
++    def configure(self, settings_path, output_root):
++        # Pure lexical validation: no settings read or output acquisition here.
++        root=str(output_root)
++        if (not _local_file(settings_path) or not _local_file(root)
++                or len(settings_path.encode('utf-8'))>3000):
++            raise ValueError('explicit bounded local schema binding required')
++        with self._lock:
++            if self._binding is not None or self._operation is not None or self._stopping:
++                raise ValueError('schema binding is fixed for this server')
++            self._binding=(settings_path,root)
++
++    def _worker(self, operation, binding):
++        try:
++            if operation.cancel.is_set():
++                operation.raw=_failure('cancelled')
++            else:
++                settings,root=binding
++                Path(root).mkdir(parents=True,exist_ok=True)
++                launch=self._launch
++                if launch is None:
++                    from configured_launcher import run
++                    launch=run
++                operation.directory=Path(root)/('schema_'+uuid.uuid4().hex)
++                operation.raw=launch(operation.directory,settings,
++                    cancel_event=operation.cancel)
++        except BaseException as error:
++            # A failed native owner may still be retained by the launcher.
++            # Do not infer release from the exception or expose its arguments.
++            operation.raw=_failure('failed',False)
++            operation.error=error
++        finally:
++            self._associate_owner(operation)
++            binding=None
++            operation.done.set()
++
++    def _associate_owner(self, operation):
++        # Retain the actual launcher object, not a PID, inferred token or path.
++        # Later exact local recovery may retire it without mutating this result.
++        try:
++            import configured_launcher as launcher
++            owner=getattr(operation.error,'launcher_owner',None)
++            if owner is None and type(operation.raw) is dict:
++                token=operation.raw.get('outer_run_id')
++                if type(token) is str:
++                    with launcher._REGISTRY_LOCK:owner=launcher.RETAINED.get(token)
++            if (isinstance(owner,launcher._Owner)
++                    and owner.directory==operation.directory):operation.owner=owner
++        except BaseException:
++            pass  # An unproved association cannot certify cleanup.
++
++    def _finished(self, operation):
++        return operation.done.is_set() and (operation.thread is None or not operation.thread.is_alive())
++
++    def _collect(self, operation):
++        if not self._finished(operation):return None
++        if operation.thread is not None:operation.thread.join(timeout=0)
++        result=_public(operation.raw,operation.cancel.is_set())
++        self._last=result
++        self._cancel_signalled=self._cancel_signalled or operation.cancel.is_set()
++        recovered=(operation.owner is not None and operation.owner.cleaned is True)
++        if recovered and not result['os_release_confirmed']:self._recovered=True
++        if (result['os_release_confirmed'] or recovered) and self._operation is operation:
++            self._operation=None
++        return result
++
++    async def _wait_cleanup(self, operation):
++        # This joins only the already registered exact worker. It never renews
++        # the launcher's own work/cleanup deadlines or replaces its owner.
++        deadline=time.monotonic()+3.05
++        with anyio.CancelScope(shield=True):
++            while not self._finished(operation) and time.monotonic()<deadline:
++                await anyio.sleep(.005)
++        with self._lock:
++            result=self._collect(operation)
++            if result is None:self._last=_failure('cleanup_unconfirmed',False)
++            return result
++
++    async def execute(self) -> SchemaResult:
++        with self._lock:
++            if self._operation is not None:self._collect(self._operation)
++            if self._operation is not None:return _failure('busy')
++            if self._stopping or self._binding is None:return _failure('disabled')
++            operation=_Operation()
++            self._operation=operation  # Registration precedes fallible start.
++            operation.thread=threading.Thread(target=self._worker,args=(operation,self._binding),
++                name='schema-mcp-owned-call',daemon=True)
++            try:operation.thread.start()
++            except BaseException as error:
++                # Thread.start may be interrupted after native creation. Keep
++                # this exact object and wait; absence of done is not release.
++                operation.start_error=error
++                operation.cancel.set()
++        try:
++            if operation.start_error is not None:
++                result=await self._wait_cleanup(operation)
++                return _failure('supervisor_error',True) if result is not None and result['os_release_confirmed'] else _failure('cleanup_unconfirmed',False)
++            while not self._finished(operation):await anyio.sleep(.005)
++        except BaseException as primary:
++            operation.primary_error=primary
++            try:
++                operation.cancel.set()
++                await self._wait_cleanup(operation)
++            except BaseException as cleanup_error:
++                operation.cleanup_error=cleanup_error
++            raise
++        with self._lock:
++            return self._collect(operation)
++
++    async def close(self):
++        with self._lock:
++            self._stopping=True
++            operation=self._operation
++            if operation is not None:operation.cancel.set()
++        if operation is not None:await self._wait_cleanup(operation)
++        with self._lock:
++            self._binding=None
++            return self._operation is None
++
++    def observation(self):
++        with self._lock:
++            operation=self._operation
++            if operation is not None:self._collect(operation)
++            operation=self._operation
++            return {'configured':self._binding is not None,'stopping':self._stopping,
++                'active_operations':int(operation is not None and not self._finished(operation)),
++                'pending_cleanup':operation is not None,
++                'last_status':self._last['status'],
++                'last_application_ack':self._last['application_ack'],
++                'last_os_release_confirmed':self._last['os_release_confirmed'],
++                'recovery_release_confirmed':self._recovered,
++                'cancel_signalled':self._cancel_signalled or (operation is not None and operation.cancel.is_set())}
