@@ -4,6 +4,7 @@
   "allowed_chat_ids": [],
   "allow_chat_discovery": false,
   "allow_contacts": false,
+  "allow_all_local_context": false,
   "max_messages_per_call": 500,
   "max_response_bytes": 262144,
   "max_session_messages": 5000,

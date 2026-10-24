@@ -31,6 +31,7 @@ _T_GROUP = "_groupChat"
 _T_ROOM = "_room"
 _T_SQUARE = "_squareChat"
 _T_SQUARE_MEMBER = "_squareMember"
+_T_SQUARE_THREAD = "_squareThread"
 
 # LINE message _contentType codes (protocol; refine from real distribution).
 _CONTENT_TYPE: dict[int, str] = {
@@ -317,6 +318,11 @@ class DbReader:
     ) -> dict:
         """Keyset scan of local rows in [since_ms, until_ms), milliseconds.
 
+        OpenChat replies use their thread MID as _chatId. Include only threads
+        mapped to this parent chat, filtering each reply by its own timestamp.
+        Cached root/last-message JSON is not a complete reply history and is
+        deliberately excluded.
+
         Timestamp + unique _id prevent gaps for equal timestamps. The first
         page's rowid ceiling reduces ordinary append/backfill changes, but SQLite
         can reuse row IDs after deletion. Inserts, edits and deletions are not
@@ -327,6 +333,13 @@ class DbReader:
         limit = min(_sane_limit(limit, 100), 500)
         scope = ["history", chat_id, since_ms, until_ms]
         position = self._cursors.decode(cursor, scope) if cursor else None
+        items, positions, more = self._history_rows(chat_id, since_ms, until_ms, limit, position)
+        return page(items, positions, scope, self._cursors, more, max_bytes,
+                    coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
+                    range_since_ms=since_ms, range_until_ms=until_ms)
+
+    def _history_rows(self, chat_id, since_ms, until_ms, limit, position):
+        """Shared local-row selection; each public mode applies its own page budget."""
         conn = self._open()
         try:
             if position is None:
@@ -339,23 +352,44 @@ class DbReader:
                 raise ValueError("Unsupported schema: _message._id must be the sole primary key")
             # _id must be a non-null unique identifier in supported LINE schema.
             contact_map = self._contacts_map(conn)
+            select, source = "m.*", f"{_T_MESSAGE} AS m"
+            chat_filter, chat_params = "m._chatId=?", (chat_id,)
+            has_threads = next(iter(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?;",
+                (_T_SQUARE_THREAD,),
+            )), None) is not None
+            if has_threads:
+                thread_primary = [r["name"] for r in conn.execute(
+                    f"PRAGMA table_info({_T_SQUARE_THREAD});") if r["pk"]]
+                if thread_primary != ["_threadMid"]:
+                    raise ValueError("Unsupported schema: _squareThread._threadMid must be the sole primary key")
+                # The parent column has no index in LINE's thread table. Scan
+                # only its ID columns, then seek _message by its chat/time index;
+                # an OR over message rows can instead force a full table scan.
+                select += ", t._threadMid AS _history_thread_id, t._messageId AS _history_thread_root_id"
+                source += (f" LEFT JOIN {_T_SQUARE_THREAD} AS t "
+                           "ON t._threadMid=m._chatId AND t._chatMid=?")
+                chat_filter = (f"m._chatId IN (SELECT ? UNION SELECT _threadMid "
+                               f"FROM {_T_SQUARE_THREAD} WHERE _chatMid=?)")
+                chat_params = (chat_id, chat_id, chat_id)
             rows = list(conn.execute(
-                f"SELECT * FROM {_T_MESSAGE} WHERE _chatId=? AND _createdTime>=? "
-                f"AND _createdTime<? AND rowid<=? "
-                f"AND (? IS NULL OR _createdTime>? OR (_createdTime=? AND _id COLLATE BINARY>?)) "
-                f"ORDER BY _createdTime ASC, _id COLLATE BINARY ASC LIMIT ?;",
-                (chat_id, since_ms, until_ms, ceiling, last_id, last_time, last_time, last_id, limit + 1),
+                f"SELECT {select} FROM {source} WHERE {chat_filter} AND m._createdTime>=? "
+                f"AND m._createdTime<? AND m.rowid<=? "
+                f"AND (? IS NULL OR m._createdTime>? OR (m._createdTime=? AND m._id COLLATE BINARY>?)) "
+                f"ORDER BY m._createdTime ASC, m._id COLLATE BINARY ASC LIMIT ?;",
+                (*chat_params, since_ms, until_ms, ceiling, last_id, last_time, last_time, last_id, limit + 1),
             ))
             items, positions = [], []
             for r in rows[:limit]:
                 _checked_id(r["_id"])
                 item = parse_message_row(dict(r), contact_map)
                 item["message_id"] = r["_id"]
+                if has_threads and r["_chatId"] != chat_id:
+                    item["thread_id"] = _checked_id(r["_history_thread_id"])
+                    item["thread_root_message_id"] = _checked_id(r["_history_thread_root_id"])
                 items.append(item)
                 positions.append([ceiling, r["_createdTime"], r["_id"]])
-            return page(items, positions, scope, self._cursors, len(rows) > limit, max_bytes,
-                        coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
-                        range_since_ms=since_ms, range_until_ms=until_ms)
+            return items, positions, len(rows) > limit
         finally:
             conn.close()
 
@@ -439,6 +473,50 @@ class DbReader:
                         coverage="approximate_recent_local_messages", consistency="live_metadata")
         finally:
             conn.close()
+
+    def get_unread_context(
+        self, chat_id: str, limit: int = 100, cursor: str | None = None,
+        max_bytes: int = 262144, include_official: bool = False,
+        allowed_chat_ids: frozenset | None = None,
+    ) -> dict:
+        """Page all local parent/thread context, not an exact unread selection.
+
+        The first unread counter is metadata only: zero does not exclude rows.
+        The history position retains the first page's rowid ceiling. This is a
+        live keyset scan, not a snapshot or evidence of complete LINE sync.
+        """
+        _checked_id(chat_id)
+        if allowed_chat_ids is not None and chat_id not in allowed_chat_ids:
+            raise PermissionError("Chat is not in allowed_chat_ids")
+        limit = min(_sane_limit(limit, 100), 500)
+        scope = ["unread_context_v1", chat_id, include_official, "oldest_first",
+                 sorted(allowed_chat_ids) if allowed_chat_ids is not None else None]
+        position = self._cursors.decode(cursor, scope) if cursor else None
+        conn = self._open()
+        try:
+            if not include_official and chat_id in self._official_mids(conn):
+                raise PermissionError("Official account context requires include_official=True")
+            if position is None:
+                row = next(iter(conn.execute(
+                    f"SELECT _unreadCount FROM {_T_CHAT} WHERE _id=?;", (chat_id,),
+                )), None)
+                initial_count = max(0, row["_unreadCount"] or 0) if row else 0
+                history_position = None
+            else:
+                initial_count, history_position = position
+        finally:
+            conn.close()
+
+        items, positions, more = self._history_rows(chat_id, 0, 2**63 - 1, limit, history_position)
+        # Store the original history position under this mode's independent HMAC
+        # scope. One page() call budgets metadata, cursor and messages together;
+        # trimming therefore resumes after the last item actually delivered.
+        return page(items, [[initial_count, item_position] for item_position in positions],
+                    scope, self._cursors, more, max_bytes,
+                    chat_id=chat_id, selection="all_local_context", order="oldest_first",
+                    sync_status="unknown", unread_boundary_verified=False,
+                    unread_count_at_start=initial_count, coverage="local_rows_only",
+                    consistency="live_keyset_scan", database_changes_may_affect_pagination=True)
 
     def get_contacts(self, query: str = "", limit: int = 50,
                      cursor: str | None = None, max_bytes: int = 262144) -> dict:

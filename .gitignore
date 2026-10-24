@@ -7,6 +7,9 @@ metadata.json
 settings.json
 __pycache__/
 *.pyc
+.venv/
+# Machine-specific Codex MCP paths; keep this integration project-local.
+.codex/config.toml
 .pytest_cache/
 spike/phase0_output*
 

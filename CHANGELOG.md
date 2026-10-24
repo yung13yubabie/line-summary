@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-10-24 — Bulk local context and exporter migration
+
+- Added owner-enabled per-chat unread context pages covering all local parent
+  and thread messages, independent of the unread counter, including zero.
+- Preserved legacy unread sampling; added an independent scope-bound cursor,
+  per-message byte trimming and an explicit all-local/read-history label.
+- Retained default session quotas while allowing explicit larger quotas or
+  `null`; mandatory per-call message/byte limits and fixed chat/date scope remain.
+- Migrated the dataset exporter to authorized server pages, with explicit
+  partial coverage, blocked/failure handling and private output destinations.
+- Added Chinese reader, policy, exporter and real-stdio regressions, including
+  over 999 messages and an explicit bulk profile beyond default session quotas.
+
+## 2026-10-24 — OpenChat thread history
+
+- Included locally stored thread replies under their authorized parent chat in
+  history pages, with thread/root IDs and each reply's own time boundary.
+- Preserved shared pagination and output budgets, excluded cached root/last
+  message JSON, and retained compatibility with databases without thread tables.
+- Added focused Chinese regressions for cross-chat isolation, equal-timestamp
+  pagination, older roots, time boundaries, schema validation and budgets.
+
+## 2026-10-24 — Project-scoped Codex support
+
+- Added a local Codex MCP setup tool with absolute paths, UTF-8 and a separate
+  300-second data-tool timeout; global settings and dependencies are untouched.
+- Added repo-scoped Codex instructions and a skill entrypoint sharing the
+  repaired Claude/Codex workflow, including scope, pagination and reply-only defaults.
+- Added Chinese real-stdio regressions for page envelopes, continuation, precise
+  day boundaries, default-denied access and fixed diagnostics using the upstream
+  locked test dependencies without pytest-asyncio.
+- Kept local account/chat permission configuration explicit and disabled by
+  default. Registering a client does not grant access to LINE data.
+
 ## 2026-10-08 — Core safety repair (breaking API)
 
 Based on `bd3569e80af56cff342cab9690e6a6d0cb2f4f93`.

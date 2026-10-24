@@ -1,6 +1,6 @@
 # line-summary
 
-用 Claude Code 讀取本機 LINE 電腦版已儲存的聊天記錄，整理指定聊天室與時間範圍的摘要。適用於 Windows；不是完整聊天備份，也不能證明 LINE 雲端訊息已全部同步。
+用 Codex 或 Claude Code 讀取本機 LINE 電腦版已儲存的聊天記錄，整理指定聊天室與時間範圍的摘要。兩者使用同一個本機 stdio MCP server。適用於 Windows；不是完整聊天備份，也不能證明 LINE 雲端訊息已全部同步。
 
 ## 先了解資料會去哪裡
 
@@ -9,18 +9,18 @@ LINE 程序記憶體 → 本機金鑰提取 → 以唯讀模式解密本機 LINE
                                       ↓
                                 MCP 工具結果
                                       ↓
-                         Claude Code → 所選模型供應商 → 摘要
+                   Codex／Claude Code → 所選模型供應商 → 摘要
 ```
 
 - MCP server 不主動把金鑰寫入檔案、log 或工具回傳值；程式會在存活期間把它保留在記憶體。這不等於「金鑰絕不落地」：作業系統分頁檔、休眠檔、程序或系統傾印仍可能包含記憶體資料，也不保證 Python 記憶體被安全抹除。
-- 本機資料庫唯讀，只描述 MCP 的資料存取方式，**不代表整個摘要流程離線**。聊天室名稱、發言者、訊息、連結及其他工具結果會進入 Claude Code 上下文，依你的模型與服務設定，可能傳送至模型供應商並保留在其紀錄或工作階段中。使用前確認供應商的資料使用與保留政策。
+- 本機資料庫唯讀，只描述 MCP 的資料存取方式，**不代表整個摘要流程離線**。聊天室名稱、發言者、訊息、連結及其他工具結果會進入 Codex／Claude Code 上下文，依你的模型與服務設定，可能傳送至模型供應商並保留在其紀錄或工作階段中。使用前確認供應商的資料使用與保留政策。
 - MCP 的讀取不操作 LINE 畫面、不把對話標為已讀，也不透過 LINE API 送出已讀回條。這項說明不適用於自行打開 LINE 對話或下方的選用捲動工具。
 - 只處理自己有權存取及使用的資料。群組裡其他人的訊息不因你能讀取就適合公開、轉寄或上傳。
 
 ## 需要什麼
 
 - Windows，以及正在執行、已登入的 LINE 電腦版。讀取 LINE 程序記憶體使用 Windows API。
-- Python 3.11 以上與 Claude Code。
+- Python 3.11 以上與本機 Windows 的 Codex 或 Claude Code。Codex 雲端與 WSL 不適用此 Windows 程序記憶體實作。
 - 對本機資料庫的讀取權限，以及可用的 SQLite3MultipleCiphers 引擎。
 
 原專案曾在 LINE 電腦版 26.3（wxSQLite3 aes128cbc）上測試。LINE 更新後可能需要重新驗證；本次安全修補沒有執行 Windows／真實帳號整合測試。
@@ -50,20 +50,39 @@ Server 的本機權限設定在 `line_mcp_server.py` 同目錄的 `settings.json
 2. 將 `enabled` 改為 `true`，只在 `allowed_chat_ids` 放入需要的明確 ID。允許清單最多 100 個 ID，沒有「全部聊天室」萬用值。
 3. 若不知道 ID，可暫時開啟 `allow_chat_discovery`，查找聊天室中繼資料，再加入選定 ID 並關閉探索。探索會把回傳的名稱、ID、類型與時間交給模型；它不授權讀取清單以外聊天室的歷史或未讀內容。
 4. 聯絡人查詢是另外的通訊錄權限，只有需要時才開啟 `allow_contacts`。即使此工具停用，獲准訊息仍會包含本機已解析的發言者名稱。
+5. 若要分頁讀取某個獲准聊天室的所有本機內容，可明確開啟 `allow_all_local_context`。此模式包含已讀訊息及討論串，未讀計數只供參考；它不是精確未讀集合。
 
-設定在程序第一次工具呼叫時固定。使用者更改設定後需重新啟動 MCP server 才會生效；不要讓聊天訊息、網頁或模型自行修改權限、提高額度，或重啟程序來繞過限制。這是 server 的資料輸出防線，並不是作業系統沙箱；請另行限制 Claude Code 對無關檔案與 shell 的存取。
+設定在程序第一次工具呼叫時固定。使用者更改設定後需重新啟動 MCP server 才會生效；不要讓聊天訊息、網頁或模型自行修改權限、提高額度，或重啟程序來繞過限制。這是 server 的資料輸出防線，並不是作業系統沙箱；請另行限制 Codex／Claude Code 對無關檔案與 shell 的存取。
 
 ### 預設輸出上限
 
-| 設定 | 預設值，也是允許的最高值 | 說明 |
+| 設定 | 預設值 | 說明 |
 | --- | ---: | --- |
 | `max_messages_per_call` | 500 | 歷史訊息／未讀訊息每次回傳的總筆數 |
 | `max_response_bytes` | 262144（256 KiB） | 每次回傳 JSON payload；不含 MCP 傳輸封裝 |
-| `max_session_messages` | 5000 | 整個 server 程序累計回傳訊息數 |
-| `max_session_bytes` | 2097152（2 MiB） | 整個程序所有工具累計回傳 JSON bytes |
+| `max_session_messages` | 5000 | 程序累計回傳訊息數；擁有者可設定更大整數或 `null` |
+| `max_session_bytes` | 2097152（2 MiB） | 程序累計 JSON bytes；擁有者可設定更大整數或 `null` |
 | `max_range_days` | 31 | 單次歷史查詢區間長度 |
 
 使用者可降低上限；byte 設定最低 2048，其餘數值最低 1。重複回傳同一則訊息仍會重複計入額度。可選的 `allowed_since`、`allowed_until` 限制歷史查詢的固定日期範圍；任一日期限制啟用時，未讀工具會直接拒絕呼叫，應改用符合日期範圍的歷史查詢。詳見 [遷移說明](MIGRATION.md)。
+
+只有兩個 `max_session_*` 欄位接受 `null`，代表不設該項程序總額度；單次仍最多 500 則、256 KiB。這些選項只能由本機擁有者明確設定，工具不能修改設定、重設用量或擴張聊天室範圍。預設仍保留 5000 則／2 MiB 的程序總額度。
+
+## 註冊到 Codex
+
+先完成上述鎖定套件安裝與本機資料範圍設定，再在專案根目錄執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools/setup_codex.py
+```
+
+工具只產生此專案的 `.codex/config.toml`，不修改全域 Codex 設定、全域 Python 套件或其他 repo。它使用執行此工具的 Python 與 server 的絕對路徑，設定 UTF-8、`startup_timeout_sec = 30` 和 `tool_timeout_sec = 300`。首次獲准讀取可能掃描記憶體數分鐘；工具逾時與啟動逾時是不同設定，Codex 預設 60 秒的工具逾時可能不足。[官方 MCP 設定說明](https://developers.openai.com/codex/mcp)
+
+相同設定可重複執行，其他 TOML 設定和註解會保留。若已有不同的 `line` 設定，工具會停止，請自行核對 Python、server 與工作目錄的路徑；搬動專案或更換虛擬環境後也需更新。產生的設定已被 Git 忽略，不要公開機器路徑。沙箱若禁止修改 `.codex/`，可由使用者在自己的 PowerShell 執行上述指令。
+
+在本機 Codex 開啟並信任此專案，重新開啟工作階段以載入設定。`codex mcp get line` 可檢查設定；互動式 CLI 的 `/mcp` 可檢查連線。**工具可見不代表已授權讀取**：`settings.json` 預設仍為停用，需由使用者指定帳號資料庫與明確聊天室允許清單。
+
+Codex 的專案 skill 位於 `.agents/skills/line-summary/`，`AGENTS.md` 也會引導它讀取 `.claude/skills/line-summary/SKILL.md` 的共用流程。可自然提出摘要要求，或使用 `$line-summary`。這些入口沿用新版分頁、日期、未讀限制及預設不存檔的行為，不安裝全域 skill。
 
 ## 註冊到 Claude Code
 
@@ -102,15 +121,37 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 
 `line_get_history` 預設每頁 100 則，最多 500 則，仍受使用者較低的上限及剩餘程序額度限制。輸入為帶時區 ISO 8601，接受正、負 UTC offset 或 `Z`；以 UTC 毫秒處理 `[since, until)`。整天用當天 00:00 到隔天 00:00，不使用 `23:59:59`，避免漏掉最後一秒內的訊息。跨頁沿用相同聊天室、時間範圍及回傳 cursor。
 
+歷史查詢也會納入獲准主聊天室底下、本機已儲存的社群討論串回覆。回覆含 `thread_id` 與 `thread_root_message_id`，依回覆自身的時間篩選，即使主訊息較舊也能納入；主訊息與回覆共用分頁及額度。只有根訊息／最後一則快取不代表完整回覆歷史，工具不會把這些快取混入。尚未下載的回覆仍無法讀取，可由使用者在 LINE 電腦版手動開啟該討論串後重查。這項修正不改變未讀採樣的語意。
+
 歷史分頁按時間與唯一訊息 ID 排序，在資料庫不變時可穩定遍歷。首次呼叫的 rowid 上界可減少一般新增資料混入，但 SQLite 刪除後可能重用 rowid，修改／刪除也會影響分頁；因此 `consistency: "live_keyset_scan"`、`database_changes_may_affect_pagination: true`、`coverage: "local_rows_only"` 不代表完整快照、完全排除新訊息或同步完成。工具的時間字串以 `+08:00` 顯示，摘要應換算成使用者指定時區。
 
 `line_get_unread` 預設每頁 20 個對話、每個對話最多 50 則最近本機訊息。`unread_count` 是本機未讀計數，`returned_count` 是實際回傳數，`selection: "latest_local_approximation"`、`sync_status: "unknown"`、`unread_boundary_verified: false`。選出的訊息可能全部已讀，不能推斷真正未讀邊界，也不能用兩種筆數相減宣稱「尚未同步 N 則」。`messages_limited` 表示採樣受上限限制；`more_local_messages` 只表示還有本機記錄，不代表還有未讀。未讀 cursor 只翻到其他對話，不補同一對話較早的訊息。
 
 達上限就停止並交付明確標示不完整的摘要。不要拆分日期、切換工具、重試或重啟來規避額度。更多 API 差異見 [MIGRATION.md](MIGRATION.md)。
 
+### 大量訊息：本機有的，到最新
+
+程式不會把資料庫的未讀計數截成 999；但 LINE 畫面的 `999+` 也不能證明本機保存了精確總數或全部內文。要超過單一聊天室採樣量，擁有者可開啟 `allow_all_local_context`，再使用：
+
+```text
+line_get_unread(chat_id="已允許的父聊天室ID", per_chat_limit=500, cursor=None)
+```
+
+提供 `chat_id` 時，`items` 改為扁平訊息頁，從最舊到最新讀取該聊天室及討論串的本機內容。沿用回傳的 `next_cursor`，直到 `has_more=false`；不以未讀計數作截斷值，計數歸零也不會中止同一次分頁。`selection: "all_local_context"`、`unread_count_at_start` 明確表示「起始未讀計數與本機上下文」，包含已讀內容，不能稱為全部精確未讀。
+
+此模式仍受單次及已設定的程序總額度限制。若確定要處理全部現有內容，擁有者可將 `max_session_messages`、`max_session_bytes` 設為 `null`；也可選較大的有限總額度。不提供 `chat_id` 的舊採樣呼叫保持原行為。固定日期限制仍會拒絕全本機模式，應使用指定日期的歷史查詢。
+
+完成表示本機掃描已走完，不保證 LINE 雲端完整同步；新到／回補、刪除與編輯仍可能影響即時資料。沒有下載的內容需由使用者先在 LINE 載入，MCP 不會自動點開聊天室。
+
+### 明確要求匯出資料集
+
+`tools/build_line_community_dataset.py` 已適配新版授權 history API、半開日期與游標。必須明確提供聊天室、日期、輸出目錄及可選的 `--limit`，不會自行選帳號或擴張設定。每頁最多 500，遵守同一組程序額度；失敗／blocked 不產出成功匯出，到達明確 `--limit` 則在 `_export_info.json` 標示部分資料。訊息及 sender map 維持原格式，並保留討論串欄位。
+
+輸出只允許放在本 repo 被忽略的 `output/` 或 Git 外的私人目錄。發言者代碼替換不等於完整去識別化，原文與其他中繼資料仍保留；sender map 也含原始姓名。這支工具只在使用者明確執行時寫檔，普通摘要仍不自動存檔。
+
 ## 摘要存在哪
 
-**預設只在 Claude Code 對話中回覆，不建立摘要檔或 metadata 檔。** 這不會刪除或阻止 Claude Code／模型供應商自己的工作階段紀錄。
+**預設只在 Codex／Claude Code 對話中回覆，不建立摘要檔或 metadata 檔。** 這不會刪除或阻止 Codex／Claude Code／模型供應商自己的工作階段紀錄。
 
 只有使用者明確要求另存時才寫檔。先確定檔案目的地、是否含直接引文／人名，以及保留策略，例如「存於私人資料夾，月底由我手動刪除」。不要默認 `~/line-summary/output/`，也不要默認會自動清理。此工具沒有保留期限或自動刪除排程。
 
