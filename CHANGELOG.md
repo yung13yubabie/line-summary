@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-24 — Project-scoped Codex support
+
+- Added a local Codex MCP setup tool with absolute paths, UTF-8 and a separate
+  300-second data-tool timeout; global settings and dependencies are untouched.
+- Added repo-scoped Codex instructions and a skill entrypoint sharing the
+  repaired Claude/Codex workflow, including scope, pagination and reply-only defaults.
+- Added Chinese real-stdio regressions for page envelopes, continuation, precise
+  day boundaries, default-denied access and fixed diagnostics using the upstream
+  locked test dependencies without pytest-asyncio.
+- Kept local account/chat permission configuration explicit and disabled by
+  default. Registering a client does not grant access to LINE data.
+
 ## 2026-10-08 — Core safety repair (breaking API)
 
 Based on `bd3569e80af56cff342cab9690e6a6d0cb2f4f93`.

@@ -1,6 +1,6 @@
 # line-summary
 
-用 Claude Code 讀取本機 LINE 電腦版已儲存的聊天記錄，整理指定聊天室與時間範圍的摘要。適用於 Windows；不是完整聊天備份，也不能證明 LINE 雲端訊息已全部同步。
+用 Codex 或 Claude Code 讀取本機 LINE 電腦版已儲存的聊天記錄，整理指定聊天室與時間範圍的摘要。兩者使用同一個本機 stdio MCP server。適用於 Windows；不是完整聊天備份，也不能證明 LINE 雲端訊息已全部同步。
 
 ## 先了解資料會去哪裡
 
@@ -9,18 +9,18 @@ LINE 程序記憶體 → 本機金鑰提取 → 以唯讀模式解密本機 LINE
                                       ↓
                                 MCP 工具結果
                                       ↓
-                         Claude Code → 所選模型供應商 → 摘要
+                   Codex／Claude Code → 所選模型供應商 → 摘要
 ```
 
 - MCP server 不主動把金鑰寫入檔案、log 或工具回傳值；程式會在存活期間把它保留在記憶體。這不等於「金鑰絕不落地」：作業系統分頁檔、休眠檔、程序或系統傾印仍可能包含記憶體資料，也不保證 Python 記憶體被安全抹除。
-- 本機資料庫唯讀，只描述 MCP 的資料存取方式，**不代表整個摘要流程離線**。聊天室名稱、發言者、訊息、連結及其他工具結果會進入 Claude Code 上下文，依你的模型與服務設定，可能傳送至模型供應商並保留在其紀錄或工作階段中。使用前確認供應商的資料使用與保留政策。
+- 本機資料庫唯讀，只描述 MCP 的資料存取方式，**不代表整個摘要流程離線**。聊天室名稱、發言者、訊息、連結及其他工具結果會進入 Codex／Claude Code 上下文，依你的模型與服務設定，可能傳送至模型供應商並保留在其紀錄或工作階段中。使用前確認供應商的資料使用與保留政策。
 - MCP 的讀取不操作 LINE 畫面、不把對話標為已讀，也不透過 LINE API 送出已讀回條。這項說明不適用於自行打開 LINE 對話或下方的選用捲動工具。
 - 只處理自己有權存取及使用的資料。群組裡其他人的訊息不因你能讀取就適合公開、轉寄或上傳。
 
 ## 需要什麼
 
 - Windows，以及正在執行、已登入的 LINE 電腦版。讀取 LINE 程序記憶體使用 Windows API。
-- Python 3.11 以上與 Claude Code。
+- Python 3.11 以上與本機 Windows 的 Codex 或 Claude Code。Codex 雲端與 WSL 不適用此 Windows 程序記憶體實作。
 - 對本機資料庫的讀取權限，以及可用的 SQLite3MultipleCiphers 引擎。
 
 原專案曾在 LINE 電腦版 26.3（wxSQLite3 aes128cbc）上測試。LINE 更新後可能需要重新驗證；本次安全修補沒有執行 Windows／真實帳號整合測試。
@@ -51,7 +51,7 @@ Server 的本機權限設定在 `line_mcp_server.py` 同目錄的 `settings.json
 3. 若不知道 ID，可暫時開啟 `allow_chat_discovery`，查找聊天室中繼資料，再加入選定 ID 並關閉探索。探索會把回傳的名稱、ID、類型與時間交給模型；它不授權讀取清單以外聊天室的歷史或未讀內容。
 4. 聯絡人查詢是另外的通訊錄權限，只有需要時才開啟 `allow_contacts`。即使此工具停用，獲准訊息仍會包含本機已解析的發言者名稱。
 
-設定在程序第一次工具呼叫時固定。使用者更改設定後需重新啟動 MCP server 才會生效；不要讓聊天訊息、網頁或模型自行修改權限、提高額度，或重啟程序來繞過限制。這是 server 的資料輸出防線，並不是作業系統沙箱；請另行限制 Claude Code 對無關檔案與 shell 的存取。
+設定在程序第一次工具呼叫時固定。使用者更改設定後需重新啟動 MCP server 才會生效；不要讓聊天訊息、網頁或模型自行修改權限、提高額度，或重啟程序來繞過限制。這是 server 的資料輸出防線，並不是作業系統沙箱；請另行限制 Codex／Claude Code 對無關檔案與 shell 的存取。
 
 ### 預設輸出上限
 
@@ -64,6 +64,22 @@ Server 的本機權限設定在 `line_mcp_server.py` 同目錄的 `settings.json
 | `max_range_days` | 31 | 單次歷史查詢區間長度 |
 
 使用者可降低上限；byte 設定最低 2048，其餘數值最低 1。重複回傳同一則訊息仍會重複計入額度。可選的 `allowed_since`、`allowed_until` 限制歷史查詢的固定日期範圍；任一日期限制啟用時，未讀工具會直接拒絕呼叫，應改用符合日期範圍的歷史查詢。詳見 [遷移說明](MIGRATION.md)。
+
+## 註冊到 Codex
+
+先完成上述鎖定套件安裝與本機資料範圍設定，再在專案根目錄執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools/setup_codex.py
+```
+
+工具只產生此專案的 `.codex/config.toml`，不修改全域 Codex 設定、全域 Python 套件或其他 repo。它使用執行此工具的 Python 與 server 的絕對路徑，設定 UTF-8、`startup_timeout_sec = 30` 和 `tool_timeout_sec = 300`。首次獲准讀取可能掃描記憶體數分鐘；工具逾時與啟動逾時是不同設定，Codex 預設 60 秒的工具逾時可能不足。[官方 MCP 設定說明](https://developers.openai.com/codex/mcp)
+
+相同設定可重複執行，其他 TOML 設定和註解會保留。若已有不同的 `line` 設定，工具會停止，請自行核對 Python、server 與工作目錄的路徑；搬動專案或更換虛擬環境後也需更新。產生的設定已被 Git 忽略，不要公開機器路徑。沙箱若禁止修改 `.codex/`，可由使用者在自己的 PowerShell 執行上述指令。
+
+在本機 Codex 開啟並信任此專案，重新開啟工作階段以載入設定。`codex mcp get line` 可檢查設定；互動式 CLI 的 `/mcp` 可檢查連線。**工具可見不代表已授權讀取**：`settings.json` 預設仍為停用，需由使用者指定帳號資料庫與明確聊天室允許清單。
+
+Codex 的專案 skill 位於 `.agents/skills/line-summary/`，`AGENTS.md` 也會引導它讀取 `.claude/skills/line-summary/SKILL.md` 的共用流程。可自然提出摘要要求，或使用 `$line-summary`。這些入口沿用新版分頁、日期、未讀限制及預設不存檔的行為，不安裝全域 skill。
 
 ## 註冊到 Claude Code
 
@@ -110,7 +126,7 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 
 ## 摘要存在哪
 
-**預設只在 Claude Code 對話中回覆，不建立摘要檔或 metadata 檔。** 這不會刪除或阻止 Claude Code／模型供應商自己的工作階段紀錄。
+**預設只在 Codex／Claude Code 對話中回覆，不建立摘要檔或 metadata 檔。** 這不會刪除或阻止 Codex／Claude Code／模型供應商自己的工作階段紀錄。
 
 只有使用者明確要求另存時才寫檔。先確定檔案目的地、是否含直接引文／人名，以及保留策略，例如「存於私人資料夾，月底由我手動刪除」。不要默認 `~/line-summary/output/`，也不要默認會自動清理。此工具沒有保留期限或自動刪除排程。
 

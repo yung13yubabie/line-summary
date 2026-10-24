@@ -7,7 +7,7 @@ claim that the live LINE database schema or process-memory access was verified.
 
 ## 1. Replace the project skill
 
-The only tracked project skill is now:
+The shared summary workflow is now:
 
 ```text
 .claude/skills/line-summary/SKILL.md
@@ -256,3 +256,28 @@ a workflow file is not evidence that a remote CI run passed.
 Publication of the repair branch and a draft PR is separate from validation.
 No merge, release, deployment, administrator escalation, or real LINE operation
 is performed by the repair workflow.
+
+## 8. Codex project integration
+
+Codex uses `.codex/config.toml`, not Claude Code's `.mcp.json`. Run the
+project virtual environment's Python with `tools/setup_codex.py` after installing
+the same locked dependencies. Configuration is project-local and machine-specific;
+do not commit it or install the dependencies globally as part of migration.
+
+The generator preserves unrelated TOML settings, uses absolute interpreter/server
+paths and UTF-8, and sets separate startup (30 seconds) and tool (300 seconds)
+timeouts. If an older generated `line` entry points to a different interpreter,
+review and update that entry manually rather than overwriting other settings.
+Trust the project and restart the Codex session to load the connection.
+
+`AGENTS.md` and `.agents/skills/line-summary/SKILL.md` route Codex to the repaired
+shared workflow under `.claude/skills/line-summary/`. Keep the new envelopes,
+half-open windows, bounded continuation, approximate unread reporting and
+reply-only defaults. Registering Codex does not enable LINE or populate the
+account/chat allowlist; the same explicit local settings apply to both clients.
+
+The new Codex stdio smoke uses Chinese synthetic data, explicit synthetic-only
+scope and `asyncio.run()`, without adding pytest-asyncio to the locked test stack.
+It verifies pagination, the last millisecond of a day, default-denied access and
+fixed diagnostics over real pipes. These checks are separate from live LINE
+validation.
