@@ -26,6 +26,11 @@ read can scan memory for several minutes; tell the user it is processing and
 report actual errors. Do not substitute raw DB access, broaden scope or restart
 to evade a denied request or exhausted budget.
 
+For explicit all-local requests, the owner-enabled per-chat unread mode pages
+flat parent/thread context and includes read history. Its unread count is only
+metadata. Default session quotas remain bounded; only an explicit owner setting
+can raise them or use null. Per-call caps and fixed chat/date scope still apply.
+
 Keep generated settings, machine paths and chat data out of Git. Changes here
 must stay project-scoped; do not install global skills, change global Python or
 Codex defaults, or update another repository as part of setup.

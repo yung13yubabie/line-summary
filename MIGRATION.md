@@ -55,7 +55,7 @@ shell access; configure the host's separate permissions appropriately.
 
 ### Caps
 
-| Setting | Default and hard maximum | Minimum |
+| Setting | Default | Minimum |
 | --- | ---: | ---: |
 | `max_messages_per_call` | 500 | 1 |
 | `max_response_bytes` | 262144 | 2048 |
@@ -66,8 +66,9 @@ shell access; configure the host's separate permissions appropriately.
 “Session” means one server process, shared across tools. Byte accounting uses
 serialized JSON payload bytes, not MCP transport framing. Contact/chat metadata
 counts against bytes; history and unread also consume message counts. Repeated
-reads consume the budget again. Caps may be lowered, not raised above these
-ceilings. Exhaustion requires an explicit partial-coverage result, not automatic
+reads consume the budget again. Per-call/range ceilings remain mandatory. Only
+the two session quotas may be explicitly raised or set to `null` by the local
+owner; defaults remain unchanged. Exhaustion requires an explicit partial-coverage result, not automatic
 retries, date splitting, tool switching, or process restarts.
 
 ## 3. Consume page envelopes
@@ -119,12 +120,13 @@ other errors and distinguish the received data from what remains unexamined.
 | --- | --- | --- |
 | `line_list_chats` | `query=""`, `chat_type=""`, `limit=50`, `cursor=None`; max 500 rows | Chat metadata |
 | `line_get_history` | required `chat_id`, `since`, `until`; `limit=100`, `cursor=None`; max 500 messages | Message with `message_id` |
-| `line_get_unread` | `limit_chats=20`, `include_official=False`, `per_chat_limit=50`, `cursor=None`; max 100 chats / 500 messages per chat, subject to 500 total messages per call | Chat with approximate local message sample |
+| `line_get_unread` | `limit_chats=20`, `include_official=False`, `per_chat_limit=50`, `cursor=None`, optional `chat_id`; max 500 messages total per call | Default: chat samples; explicit owner-enabled `chat_id`: flat all-local context messages |
 | `line_get_contacts` | `query=""`, `limit=50`, `cursor=None`; max 100 rows | Contact ID and display name |
 
 Actual results can be smaller because of local policy, remaining process
-budgets, byte limits, or available local rows. Contact lookup is opt-in. Unread
-cursors bind `include_official` and `per_chat_limit` as well as the allowlist.
+budgets, byte limits, or available local rows. Contact lookup is opt-in. Legacy
+unread chat cursors bind `include_official` and `per_chat_limit` as well as the
+allowlist; all-local message cursors additionally bind their own mode and chat.
 
 ## 4. Change history windows to `[since, until)`
 
@@ -180,7 +182,7 @@ sync either. `messages_limited` can be true even when fewer local bodies exist;
 it does not prove omitted bodies are available. `more_local_messages` says
 nothing about their unread state.
 
-Unread pagination advances across **chats**, not messages within each chat.
+Without `chat_id`, unread pagination advances across **chats**, not messages within each chat.
 Reaching the final chat page cannot repair a limited per-chat sample. The
 coverage is `approximate_recent_local_messages`; report unread counters, sample
 sizes, unknown sync status, and all limitations. Official-account filtering is
@@ -281,3 +283,28 @@ scope and `asyncio.run()`, without adding pytest-asyncio to the locked test stac
 It verifies pagination, the last millisecond of a day, default-denied access and
 fixed diagnostics over real pipes. These checks are separate from live LINE
 validation.
+
+## 9. Large local context and export callers
+
+Existing `line_get_unread()` calls still list unread counts and capped samples,
+with cursors paging chats only. Adding `chat_id=<allowed parent>` selects a new
+flat-message mode, gated by local `allow_all_local_context` (default false).
+This reads all locally stored parent/thread context oldest first; it includes
+read history and does not use the unread count as a selection limit. The envelope
+reports `selection="all_local_context"`, `unread_count_at_start`, unknown sync
+and an unverified unread boundary. Follow its opaque cursor with the same chat
+and official-account option. Fixed date scopes still reject this mode.
+
+The default process quotas remain 5000 messages and 2 MiB. Owners may configure
+larger positive session quotas (byte quotas at least 2048) or explicitly use
+`null` for either `max_session_messages` or `max_session_bytes` to remove that
+process total. Per-call limits remain mandatory: at most 500 messages and 256
+KiB. Tools cannot change settings, expand scope, or reset exhausted quotas.
+
+The dataset exporter now calls the authorized server history API rather than
+choosing a database or extracting keys directly. It follows half-open date
+pages to the explicit `--limit`, preserves the message-list/sender-map formats,
+and adds `_export_info.json` for completion/limit metadata. Failed or blocked
+reads do not create successful-looking exports. Use ignored `output/` here or
+a private directory outside Git repositories. Sender labels alone do not
+anonymize message text, IDs, URLs or the separate sender map.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-24 — Bulk local context and exporter migration
+
+- Added owner-enabled per-chat unread context pages covering all local parent
+  and thread messages, independent of the unread counter, including zero.
+- Preserved legacy unread sampling; added an independent scope-bound cursor,
+  per-message byte trimming and an explicit all-local/read-history label.
+- Retained default session quotas while allowing explicit larger quotas or
+  `null`; mandatory per-call message/byte limits and fixed chat/date scope remain.
+- Migrated the dataset exporter to authorized server pages, with explicit
+  partial coverage, blocked/failure handling and private output destinations.
+- Added Chinese reader, policy, exporter and real-stdio regressions, including
+  over 999 messages and an explicit bulk profile beyond default session quotas.
+
 ## 2026-10-24 — OpenChat thread history
 
 - Included locally stored thread replies under their authorized parent chat in

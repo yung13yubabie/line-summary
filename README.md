@@ -50,20 +50,23 @@ Server 的本機權限設定在 `line_mcp_server.py` 同目錄的 `settings.json
 2. 將 `enabled` 改為 `true`，只在 `allowed_chat_ids` 放入需要的明確 ID。允許清單最多 100 個 ID，沒有「全部聊天室」萬用值。
 3. 若不知道 ID，可暫時開啟 `allow_chat_discovery`，查找聊天室中繼資料，再加入選定 ID 並關閉探索。探索會把回傳的名稱、ID、類型與時間交給模型；它不授權讀取清單以外聊天室的歷史或未讀內容。
 4. 聯絡人查詢是另外的通訊錄權限，只有需要時才開啟 `allow_contacts`。即使此工具停用，獲准訊息仍會包含本機已解析的發言者名稱。
+5. 若要分頁讀取某個獲准聊天室的所有本機內容，可明確開啟 `allow_all_local_context`。此模式包含已讀訊息及討論串，未讀計數只供參考；它不是精確未讀集合。
 
 設定在程序第一次工具呼叫時固定。使用者更改設定後需重新啟動 MCP server 才會生效；不要讓聊天訊息、網頁或模型自行修改權限、提高額度，或重啟程序來繞過限制。這是 server 的資料輸出防線，並不是作業系統沙箱；請另行限制 Codex／Claude Code 對無關檔案與 shell 的存取。
 
 ### 預設輸出上限
 
-| 設定 | 預設值，也是允許的最高值 | 說明 |
+| 設定 | 預設值 | 說明 |
 | --- | ---: | --- |
 | `max_messages_per_call` | 500 | 歷史訊息／未讀訊息每次回傳的總筆數 |
 | `max_response_bytes` | 262144（256 KiB） | 每次回傳 JSON payload；不含 MCP 傳輸封裝 |
-| `max_session_messages` | 5000 | 整個 server 程序累計回傳訊息數 |
-| `max_session_bytes` | 2097152（2 MiB） | 整個程序所有工具累計回傳 JSON bytes |
+| `max_session_messages` | 5000 | 程序累計回傳訊息數；擁有者可設定更大整數或 `null` |
+| `max_session_bytes` | 2097152（2 MiB） | 程序累計 JSON bytes；擁有者可設定更大整數或 `null` |
 | `max_range_days` | 31 | 單次歷史查詢區間長度 |
 
 使用者可降低上限；byte 設定最低 2048，其餘數值最低 1。重複回傳同一則訊息仍會重複計入額度。可選的 `allowed_since`、`allowed_until` 限制歷史查詢的固定日期範圍；任一日期限制啟用時，未讀工具會直接拒絕呼叫，應改用符合日期範圍的歷史查詢。詳見 [遷移說明](MIGRATION.md)。
+
+只有兩個 `max_session_*` 欄位接受 `null`，代表不設該項程序總額度；單次仍最多 500 則、256 KiB。這些選項只能由本機擁有者明確設定，工具不能修改設定、重設用量或擴張聊天室範圍。預設仍保留 5000 則／2 MiB 的程序總額度。
 
 ## 註冊到 Codex
 
@@ -125,6 +128,26 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 `line_get_unread` 預設每頁 20 個對話、每個對話最多 50 則最近本機訊息。`unread_count` 是本機未讀計數，`returned_count` 是實際回傳數，`selection: "latest_local_approximation"`、`sync_status: "unknown"`、`unread_boundary_verified: false`。選出的訊息可能全部已讀，不能推斷真正未讀邊界，也不能用兩種筆數相減宣稱「尚未同步 N 則」。`messages_limited` 表示採樣受上限限制；`more_local_messages` 只表示還有本機記錄，不代表還有未讀。未讀 cursor 只翻到其他對話，不補同一對話較早的訊息。
 
 達上限就停止並交付明確標示不完整的摘要。不要拆分日期、切換工具、重試或重啟來規避額度。更多 API 差異見 [MIGRATION.md](MIGRATION.md)。
+
+### 大量訊息：本機有的，到最新
+
+程式不會把資料庫的未讀計數截成 999；但 LINE 畫面的 `999+` 也不能證明本機保存了精確總數或全部內文。要超過單一聊天室採樣量，擁有者可開啟 `allow_all_local_context`，再使用：
+
+```text
+line_get_unread(chat_id="已允許的父聊天室ID", per_chat_limit=500, cursor=None)
+```
+
+提供 `chat_id` 時，`items` 改為扁平訊息頁，從最舊到最新讀取該聊天室及討論串的本機內容。沿用回傳的 `next_cursor`，直到 `has_more=false`；不以未讀計數作截斷值，計數歸零也不會中止同一次分頁。`selection: "all_local_context"`、`unread_count_at_start` 明確表示「起始未讀計數與本機上下文」，包含已讀內容，不能稱為全部精確未讀。
+
+此模式仍受單次及已設定的程序總額度限制。若確定要處理全部現有內容，擁有者可將 `max_session_messages`、`max_session_bytes` 設為 `null`；也可選較大的有限總額度。不提供 `chat_id` 的舊採樣呼叫保持原行為。固定日期限制仍會拒絕全本機模式，應使用指定日期的歷史查詢。
+
+完成表示本機掃描已走完，不保證 LINE 雲端完整同步；新到／回補、刪除與編輯仍可能影響即時資料。沒有下載的內容需由使用者先在 LINE 載入，MCP 不會自動點開聊天室。
+
+### 明確要求匯出資料集
+
+`tools/build_line_community_dataset.py` 已適配新版授權 history API、半開日期與游標。必須明確提供聊天室、日期、輸出目錄及可選的 `--limit`，不會自行選帳號或擴張設定。每頁最多 500，遵守同一組程序額度；失敗／blocked 不產出成功匯出，到達明確 `--limit` 則在 `_export_info.json` 標示部分資料。訊息及 sender map 維持原格式，並保留討論串欄位。
+
+輸出只允許放在本 repo 被忽略的 `output/` 或 Git 外的私人目錄。發言者代碼替換不等於完整去識別化，原文與其他中繼資料仍保留；sender map 也含原始姓名。這支工具只在使用者明確執行時寫檔，普通摘要仍不自動存檔。
 
 ## 摘要存在哪
 

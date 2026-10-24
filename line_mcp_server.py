@@ -87,6 +87,7 @@ _DEFAULTS = {
     "allowed_chat_ids": [],
     "allow_chat_discovery": False,
     "allow_contacts": False,
+    "allow_all_local_context": False,
     "max_messages_per_call": 500,
     "max_response_bytes": 262144,
     "max_session_messages": 5000,
@@ -143,7 +144,7 @@ def _load_settings() -> dict:
     if not isinstance(supplied, dict) or set(supplied) - set(_DEFAULTS):
         raise ValueError("Unknown or invalid settings; see settings.example.json and MIGRATION.md")
     settings = {**_DEFAULTS, **supplied}
-    for key in ("enabled", "allow_chat_discovery", "allow_contacts"):
+    for key in ("enabled", "allow_chat_discovery", "allow_contacts", "allow_all_local_context"):
         if type(settings[key]) is not bool:
             raise ValueError(f"{key} must be a boolean")
     ids = settings["allowed_chat_ids"]
@@ -154,10 +155,14 @@ def _load_settings() -> dict:
         raise ValueError("db_path must be a string")
     for key, ceiling, floor in (("max_messages_per_call", 500, 1),
                                 ("max_response_bytes", 262144, 2048),
-                                ("max_session_messages", 5000, 1),
-                                ("max_session_bytes", 2097152, 2048),
+                                ("max_session_messages", 2**63 - 1, 1),
+                                ("max_session_bytes", 2**63 - 1, 2048),
                                 ("max_range_days", 31, 1)):
         value = settings[key]
+        # Only an explicit local owner setting can remove a process-wide quota.
+        # Per-call limits remain mandatory, including for large paged reads.
+        if value is None and key in ("max_session_messages", "max_session_bytes"):
+            continue
         if type(value) is not int or not floor <= value <= ceiling:
             raise ValueError(f"{key} must be between {floor} and {ceiling}")
     for key in ("allowed_since", "allowed_until"):
@@ -187,9 +192,10 @@ def _authorize(chat_id=None, contacts=False, discovery=False):
     if not contacts and chat_id is None and not policy["allowed_chat_ids"]:
         if not (discovery and policy["allow_chat_discovery"]):
             raise PermissionError("No allowed chats configured")
-    if policy["max_session_bytes"] - _session_bytes < 2048:
+    if policy["max_session_bytes"] is not None and policy["max_session_bytes"] - _session_bytes < 2048:
         raise PermissionError("Session byte budget exhausted; stop and report incomplete coverage")
-    if not contacts and not discovery and _session_messages >= policy["max_session_messages"]:
+    if (not contacts and not discovery and policy["max_session_messages"] is not None
+            and _session_messages >= policy["max_session_messages"]):
         raise PermissionError("Session message budget exhausted; stop and report incomplete coverage")
     return policy
 
@@ -210,12 +216,17 @@ def _get_reader() -> DbReader:
 
 
 def _byte_budget(policy):
-    return min(policy["max_response_bytes"], policy["max_session_bytes"] - _session_bytes)
+    limit = policy["max_response_bytes"]
+    if policy["max_session_bytes"] is not None:
+        limit = min(limit, policy["max_session_bytes"] - _session_bytes)
+    return limit
 
 
 def _message_budget(policy, requested):
-    return min(_sane_limit(requested, 100), policy["max_messages_per_call"],
-               policy["max_session_messages"] - _session_messages)
+    limit = min(_sane_limit(requested, 100), policy["max_messages_per_call"])
+    if policy["max_session_messages"] is not None:
+        limit = min(limit, policy["max_session_messages"] - _session_messages)
+    return limit
 
 
 def _deliver(result, message_count, policy):
@@ -279,18 +290,31 @@ def line_get_history(chat_id: str, since: str, until: str, limit: int = 100,
 
 @mcp.tool()
 def line_get_unread(limit_chats: int = 20, include_official: bool = False,
-                    per_chat_limit: int = 50, cursor: str | None = None) -> dict:
+                    per_chat_limit: int = 50, cursor: str | None = None,
+                    chat_id: str | None = None) -> dict:
     """Unread counts with approximate latest local messages from allowed chats.
 
     sync_status is always unknown. Rows can ALL be already read; never claim
     complete/exact unread coverage. Passive reads do not send read receipts.
-    Cursor pages chats only, not older messages inside a chat; messages_limited
-    means that chat's sample was capped. Use authorized history for more context.
+    Without chat_id, cursor pages chats only and messages_limited marks a capped
+    sample. With chat_id and the owner's allow_all_local_context opt-in, items
+    are flat messages from all local parent/thread history, oldest first; cursor
+    continues messages and per_chat_limit is the page size. This includes read
+    messages, is not an exact unread set, and never proves remote sync.
     """
     with _lock:
-        policy = _authorize()
+        policy = _authorize(chat_id=chat_id)
         if policy["allowed_since"] is not None or policy["allowed_until"] is not None:
             raise PermissionError("Unread sampling disabled under a date scope; use date-scoped history")
+        if chat_id is not None:
+            if not policy["allow_all_local_context"]:
+                raise PermissionError("All-local context requires the owner's allow_all_local_context setting")
+            result = _get_reader().get_unread_context(
+                chat_id=chat_id, limit=_message_budget(policy, per_chat_limit), cursor=cursor,
+                max_bytes=_byte_budget(policy), include_official=include_official,
+                allowed_chat_ids=policy["allowed_chat_ids"],
+            )
+            return _deliver(result, len(result["items"]), policy)
         result = _get_reader().get_unread(limit_chats=limit_chats, include_official=include_official,
                                          per_chat_limit=per_chat_limit,
                                          total_message_limit=_message_budget(policy, policy["max_messages_per_call"]),

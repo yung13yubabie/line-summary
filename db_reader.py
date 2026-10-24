@@ -333,6 +333,13 @@ class DbReader:
         limit = min(_sane_limit(limit, 100), 500)
         scope = ["history", chat_id, since_ms, until_ms]
         position = self._cursors.decode(cursor, scope) if cursor else None
+        items, positions, more = self._history_rows(chat_id, since_ms, until_ms, limit, position)
+        return page(items, positions, scope, self._cursors, more, max_bytes,
+                    coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
+                    range_since_ms=since_ms, range_until_ms=until_ms)
+
+    def _history_rows(self, chat_id, since_ms, until_ms, limit, position):
+        """Shared local-row selection; each public mode applies its own page budget."""
         conn = self._open()
         try:
             if position is None:
@@ -382,9 +389,7 @@ class DbReader:
                     item["thread_root_message_id"] = _checked_id(r["_history_thread_root_id"])
                 items.append(item)
                 positions.append([ceiling, r["_createdTime"], r["_id"]])
-            return page(items, positions, scope, self._cursors, len(rows) > limit, max_bytes,
-                        coverage="local_rows_only", consistency="live_keyset_scan", database_changes_may_affect_pagination=True,
-                        range_since_ms=since_ms, range_until_ms=until_ms)
+            return items, positions, len(rows) > limit
         finally:
             conn.close()
 
@@ -468,6 +473,50 @@ class DbReader:
                         coverage="approximate_recent_local_messages", consistency="live_metadata")
         finally:
             conn.close()
+
+    def get_unread_context(
+        self, chat_id: str, limit: int = 100, cursor: str | None = None,
+        max_bytes: int = 262144, include_official: bool = False,
+        allowed_chat_ids: frozenset | None = None,
+    ) -> dict:
+        """Page all local parent/thread context, not an exact unread selection.
+
+        The first unread counter is metadata only: zero does not exclude rows.
+        The history position retains the first page's rowid ceiling. This is a
+        live keyset scan, not a snapshot or evidence of complete LINE sync.
+        """
+        _checked_id(chat_id)
+        if allowed_chat_ids is not None and chat_id not in allowed_chat_ids:
+            raise PermissionError("Chat is not in allowed_chat_ids")
+        limit = min(_sane_limit(limit, 100), 500)
+        scope = ["unread_context_v1", chat_id, include_official, "oldest_first",
+                 sorted(allowed_chat_ids) if allowed_chat_ids is not None else None]
+        position = self._cursors.decode(cursor, scope) if cursor else None
+        conn = self._open()
+        try:
+            if not include_official and chat_id in self._official_mids(conn):
+                raise PermissionError("Official account context requires include_official=True")
+            if position is None:
+                row = next(iter(conn.execute(
+                    f"SELECT _unreadCount FROM {_T_CHAT} WHERE _id=?;", (chat_id,),
+                )), None)
+                initial_count = max(0, row["_unreadCount"] or 0) if row else 0
+                history_position = None
+            else:
+                initial_count, history_position = position
+        finally:
+            conn.close()
+
+        items, positions, more = self._history_rows(chat_id, 0, 2**63 - 1, limit, history_position)
+        # Store the original history position under this mode's independent HMAC
+        # scope. One page() call budgets metadata, cursor and messages together;
+        # trimming therefore resumes after the last item actually delivered.
+        return page(items, [[initial_count, item_position] for item_position in positions],
+                    scope, self._cursors, more, max_bytes,
+                    chat_id=chat_id, selection="all_local_context", order="oldest_first",
+                    sync_status="unknown", unread_boundary_verified=False,
+                    unread_count_at_start=initial_count, coverage="local_rows_only",
+                    consistency="live_keyset_scan", database_changes_may_affect_pagination=True)
 
     def get_contacts(self, query: str = "", limit: int = 50,
                      cursor: str | None = None, max_bytes: int = 262144) -> dict:
