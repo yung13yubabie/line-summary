@@ -31,6 +31,7 @@ _T_GROUP = "_groupChat"
 _T_ROOM = "_room"
 _T_SQUARE = "_squareChat"
 _T_SQUARE_MEMBER = "_squareMember"
+_T_SQUARE_THREAD = "_squareThread"
 
 # LINE message _contentType codes (protocol; refine from real distribution).
 _CONTENT_TYPE: dict[int, str] = {
@@ -317,6 +318,11 @@ class DbReader:
     ) -> dict:
         """Keyset scan of local rows in [since_ms, until_ms), milliseconds.
 
+        OpenChat replies use their thread MID as _chatId. Include only threads
+        mapped to this parent chat, filtering each reply by its own timestamp.
+        Cached root/last-message JSON is not a complete reply history and is
+        deliberately excluded.
+
         Timestamp + unique _id prevent gaps for equal timestamps. The first
         page's rowid ceiling reduces ordinary append/backfill changes, but SQLite
         can reuse row IDs after deletion. Inserts, edits and deletions are not
@@ -339,18 +345,41 @@ class DbReader:
                 raise ValueError("Unsupported schema: _message._id must be the sole primary key")
             # _id must be a non-null unique identifier in supported LINE schema.
             contact_map = self._contacts_map(conn)
+            select, source = "m.*", f"{_T_MESSAGE} AS m"
+            chat_filter, chat_params = "m._chatId=?", (chat_id,)
+            has_threads = next(iter(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?;",
+                (_T_SQUARE_THREAD,),
+            )), None) is not None
+            if has_threads:
+                thread_primary = [r["name"] for r in conn.execute(
+                    f"PRAGMA table_info({_T_SQUARE_THREAD});") if r["pk"]]
+                if thread_primary != ["_threadMid"]:
+                    raise ValueError("Unsupported schema: _squareThread._threadMid must be the sole primary key")
+                # The parent column has no index in LINE's thread table. Scan
+                # only its ID columns, then seek _message by its chat/time index;
+                # an OR over message rows can instead force a full table scan.
+                select += ", t._threadMid AS _history_thread_id, t._messageId AS _history_thread_root_id"
+                source += (f" LEFT JOIN {_T_SQUARE_THREAD} AS t "
+                           "ON t._threadMid=m._chatId AND t._chatMid=?")
+                chat_filter = (f"m._chatId IN (SELECT ? UNION SELECT _threadMid "
+                               f"FROM {_T_SQUARE_THREAD} WHERE _chatMid=?)")
+                chat_params = (chat_id, chat_id, chat_id)
             rows = list(conn.execute(
-                f"SELECT * FROM {_T_MESSAGE} WHERE _chatId=? AND _createdTime>=? "
-                f"AND _createdTime<? AND rowid<=? "
-                f"AND (? IS NULL OR _createdTime>? OR (_createdTime=? AND _id COLLATE BINARY>?)) "
-                f"ORDER BY _createdTime ASC, _id COLLATE BINARY ASC LIMIT ?;",
-                (chat_id, since_ms, until_ms, ceiling, last_id, last_time, last_time, last_id, limit + 1),
+                f"SELECT {select} FROM {source} WHERE {chat_filter} AND m._createdTime>=? "
+                f"AND m._createdTime<? AND m.rowid<=? "
+                f"AND (? IS NULL OR m._createdTime>? OR (m._createdTime=? AND m._id COLLATE BINARY>?)) "
+                f"ORDER BY m._createdTime ASC, m._id COLLATE BINARY ASC LIMIT ?;",
+                (*chat_params, since_ms, until_ms, ceiling, last_id, last_time, last_time, last_id, limit + 1),
             ))
             items, positions = [], []
             for r in rows[:limit]:
                 _checked_id(r["_id"])
                 item = parse_message_row(dict(r), contact_map)
                 item["message_id"] = r["_id"]
+                if has_threads and r["_chatId"] != chat_id:
+                    item["thread_id"] = _checked_id(r["_history_thread_id"])
+                    item["thread_root_message_id"] = _checked_id(r["_history_thread_root_id"])
                 items.append(item)
                 positions.append([ceiling, r["_createdTime"], r["_id"]])
             return page(items, positions, scope, self._cursors, len(rows) > limit, max_bytes,

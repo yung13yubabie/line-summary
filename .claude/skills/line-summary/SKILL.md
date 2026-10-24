@@ -89,7 +89,13 @@ All four tools return an envelope, not a bare array:
 
 Call `line_get_history(chat_id, since, until, limit=100, cursor=None)`. Each page
 contains messages with `message_id`, type, sender, timestamp, and available text
-or media metadata. Defaults cap history/unread at 500 total messages per call,
+or media metadata. Authorized parent history also includes local OpenChat thread
+replies, carrying `thread_id` and `thread_root_message_id`. Group them with the
+matching root when it was returned; otherwise label them as replies to an older
+or unavailable root without inventing its text. Each reply is filtered by its
+own time. Cached root/last-message JSON is excluded and completion still does
+not prove that LINE downloaded every reply. Unread sampling is unchanged.
+Defaults cap history/unread at 500 total messages per call,
 256 KiB per response, 5,000 messages and 2 MiB across the server process. Local
 policy can be stricter. Metadata results also use the byte budget; repeated
 messages count again. Byte limits cover serialized JSON, not MCP framing.

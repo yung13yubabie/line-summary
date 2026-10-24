@@ -118,6 +118,8 @@ MCP 註冊與 skill 安裝是兩件事。專案 skill 位於 `.claude/skills/lin
 
 `line_get_history` 預設每頁 100 則，最多 500 則，仍受使用者較低的上限及剩餘程序額度限制。輸入為帶時區 ISO 8601，接受正、負 UTC offset 或 `Z`；以 UTC 毫秒處理 `[since, until)`。整天用當天 00:00 到隔天 00:00，不使用 `23:59:59`，避免漏掉最後一秒內的訊息。跨頁沿用相同聊天室、時間範圍及回傳 cursor。
 
+歷史查詢也會納入獲准主聊天室底下、本機已儲存的社群討論串回覆。回覆含 `thread_id` 與 `thread_root_message_id`，依回覆自身的時間篩選，即使主訊息較舊也能納入；主訊息與回覆共用分頁及額度。只有根訊息／最後一則快取不代表完整回覆歷史，工具不會把這些快取混入。尚未下載的回覆仍無法讀取，可由使用者在 LINE 電腦版手動開啟該討論串後重查。這項修正不改變未讀採樣的語意。
+
 歷史分頁按時間與唯一訊息 ID 排序，在資料庫不變時可穩定遍歷。首次呼叫的 rowid 上界可減少一般新增資料混入，但 SQLite 刪除後可能重用 rowid，修改／刪除也會影響分頁；因此 `consistency: "live_keyset_scan"`、`database_changes_may_affect_pagination: true`、`coverage: "local_rows_only"` 不代表完整快照、完全排除新訊息或同步完成。工具的時間字串以 `+08:00` 顯示，摘要應換算成使用者指定時區。
 
 `line_get_unread` 預設每頁 20 個對話、每個對話最多 50 則最近本機訊息。`unread_count` 是本機未讀計數，`returned_count` 是實際回傳數，`selection: "latest_local_approximation"`、`sync_status: "unknown"`、`unread_boundary_verified: false`。選出的訊息可能全部已讀，不能推斷真正未讀邊界，也不能用兩種筆數相減宣稱「尚未同步 N 則」。`messages_limited` 表示採樣受上限限制；`more_local_messages` 只表示還有本機記錄，不代表還有未讀。未讀 cursor 只翻到其他對話，不補同一對話較早的訊息。

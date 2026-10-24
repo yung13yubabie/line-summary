@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-24 — OpenChat thread history
+
+- Included locally stored thread replies under their authorized parent chat in
+  history pages, with thread/root IDs and each reply's own time boundary.
+- Preserved shared pagination and output budgets, excluded cached root/last
+  message JSON, and retained compatibility with databases without thread tables.
+- Added focused Chinese regressions for cross-chat isolation, equal-timestamp
+  pagination, older roots, time boundaries, schema validation and budgets.
+
 ## 2026-10-24 — Project-scoped Codex support
 
 - Added a local Codex MCP setup tool with absolute paths, UTF-8 and a separate
